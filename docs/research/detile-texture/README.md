@@ -240,6 +240,47 @@ preserve contrast. Syncing works the same way: the same seed on each instance.
 
 ---
 
+## 6. Detecting and avoiding internal defects (prototype)
+
+Question: can the node find seams that are already *inside* a texture (sloppy cut and paste,
+clone or heal brush) and keep them out of the result? Prototype: [`prototype/defects.py`](prototype/defects.py)
+and [`prototype/defect_layer_choice.py`](prototype/defect_layer_choice.py).
+
+### Detection cues
+| Cue | Finds | How |
+|---|---|---|
+| 1-pixel step | hard paste edges, offset seams | The jump between two neighbouring pixels is far larger than the jumps 1–2 px away in the same direction. Optics spread natural photo edges over several pixels. Long straight runs are boosted. |
+| Lost grain | heal / smudge / soft clone brush | Local fine-grain energy below about 45% of the image's typical level. |
+| Copy-move | clone stamp, pasted patches (**both source and copy**) | Dense block matching on the high-pass image (Fridrich-style). Grain never repeats by chance, so many matching blocks with the same offset mean a copy. |
+
+Test: the cobblestone material with photo-like grain and 4 injected defects. All 4 were found,
+with **0% false alarms** on clean images and outside the defects. Detection takes 1.6 s at 512².
+
+![detection](images/defects.jpg)
+
+Robustness:
+- JPEG quality 90 gives no false alarms. Quality 70 gives 1.9% false "lost grain" flags, and
+  JPEG compression defeats copy-move detection.
+- A blurry, grain-free source (upscaled or denoised) hides 1-pixel seams, though copy-move
+  detection still works.
+- 1-pixel-sharp CG/pixel-art edges would trigger the step cue (not tested).
+
+### Using the mask
+- **Repair splats (rejected):** covering defects with small round patches from clean areas
+  turns structured content into confetti.
+  ![repair splats](images/repair.jpg)
+- **Defect-aware layer choice (works):** every method blends the image with a shifted copy of
+  itself. Where one layer has a defect, prefer the other layer, except in the zones that
+  guarantee tiling. The plan, and therefore the whole PBR stack, stays in sync. Leftover visible
+  damage: Quincunx 2.45% → 0.35%, Linear 3.01% → 0%, Min-Error Seam 0% → 0% (its cuts already
+  avoided the defects here). Seam scores were unchanged.
+  ![layer choice](images/select.jpg)
+- **Limits:** a defect must be clean in the other layer, i.e. smaller than about a quarter of
+  the image. If only a seam's *edge* is marked, it becomes a soft transition instead of
+  vanishing. Duplicates are not damage and should only be treated as such on request.
+
+---
+
 ## Sources
 - [B2M — Make your image tile](https://helpx.adobe.com/substance-3d-b2m/desktop/main-features/make-your-image-tile.html), [B2M parameters](https://helpx.adobe.com/substance-3d-b2m/desktop/parameters.html), [B2M3 Randomize](https://substance3d.adobe.com/documentation/b2m3/randomize-67797032.html), [Bitmap2Material 2 manual](https://usermanual.wiki/Pdf/bitmap2material2manual.1323014820/html)
 - [Make It Tile Photo/Patch parameters (ArtStation)](https://badraztt.artstation.com/blog/q0v7/make-it-tile-substance-painter-filter), [Smart Auto Tile](https://helpx.adobe.com/substance-3d-designer/substance-compositing-graphs/nodes-reference-for-substance-compositing-graphs/node-library/material-filters/scan-processing/smart-auto-tile.html)
