@@ -216,3 +216,37 @@ def test_crop_margin_same_area_across_resolutions():
     assert b.shape[:2] == (80, 80)
     downscaled = cv2.resize(a, (80, 80), interpolation=cv2.INTER_AREA)
     assert np.abs(downscaled - b).mean() < 0.01
+
+
+def test_quincunx_tips_do_not_leak():
+    # Smooth, low-detail images used to show a seam at the 4 diamond tips.
+    ratios = []
+    for seed in range(6):
+        small = np.random.default_rng(seed).random((8, 8, 3)).astype(np.float32)
+        img = cv2.resize(small, (400, 300), interpolation=cv2.INTER_CUBIC)
+        out = run(img, SeamlessMethod.EDGES_QUINCUNX, seed=seed)
+        ratios.append(seam_ratio(out))
+    assert max(ratios) < 1.1, ratios
+
+
+def test_min_error_seam_has_no_hard_step_on_smooth_images():
+    # Only large-scale brightness, no detail: a sharp cut would show as a visible step.
+    small = np.random.default_rng(3).random((4, 4, 3)).astype(np.float32)
+    img = cv2.resize(small, (256, 256), interpolation=cv2.INTER_CUBIC)
+    out = run(img, SeamlessMethod.MIN_ERROR_SEAM)
+    max_step_in = max(np.abs(np.diff(img, axis=a)).max() for a in (0, 1))
+    max_step_out = max(np.abs(np.diff(out, axis=a)).max() for a in (0, 1))
+    assert max_step_out < 3 * max_step_in
+
+
+@pytest.mark.parametrize("method", ALL_METHODS)
+def test_normals_ignore_blue_channel(method: SeamlessMethod):
+    """Two-channel (BC5-style) normal maps with an empty blue channel give the same result."""
+    height = smooth_random(96, 96, 1, seed=11)[:, :, 0]
+    normal = normal_from_height(height, MapType.NORMAL_GL)
+    no_blue = normal.copy()
+    no_blue[:, :, 0] = 0
+    plan = create_plan(height, method, 3, splat=SPLATS_WITH_ROTATION)
+    a = apply_plan(plan, normal, MapType.NORMAL_GL)
+    b = apply_plan(plan, no_blue, MapType.NORMAL_GL)
+    assert np.abs(a - b).max() < 0.02

@@ -73,6 +73,11 @@ class SeamParams:
     """Fraction of the available band in which the seam may wander (0..1)."""
     feather: float = 2.0
     """Blur radius of the seam, in pixels of the plan resolution."""
+    low_freq_blend: float = 0.03
+    """
+    Large-scale brightness is blended over a wide transition of this size (fraction of the
+    short side), so the sharp cut doesn't show as a step on smooth textures. 0 disables it.
+    """
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,10 @@ class SeamlessPlan:
     splat_softness: float = 0.35
     splat_warp: float = 0.25
     preserve_contrast: bool = False
+    low_masks: list[np.ndarray | None] = field(default_factory=list)
+    """Optional wide masks for the low-frequency band (two-band blending)."""
+    band_sigma: float = 0.0
+    """Blur sigma separating the two bands, as a fraction of the short side."""
 
 
 # --------------------------------------------------------------------------- utilities
@@ -180,18 +189,31 @@ def _normal_xy(img: np.ndarray, map_type: MapType) -> tuple[np.ndarray, np.ndarr
     return x, y
 
 
-def _normalize_normals(img: np.ndarray, map_type: MapType) -> np.ndarray:
-    """Re-normalizes the BGR channels of a normal map, keeping any extra channel as is."""
-    out = img.copy()
-    z = img[:, :, 0] * 2 - 1
+def _decode_normals(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    XYZ of a BGR normal map, read from the red and green channels only. Z is rebuilt, so maps
+    with an empty or junk blue channel (e.g. BC5/two-channel normal maps) still work.
+    """
     x = img[:, :, 2] * 2 - 1
     y = img[:, :, 1] * 2 - 1
-    length = np.sqrt(x * x + y * y + z * z)
-    length = np.maximum(length, 1e-6)
+    z = np.sqrt(np.clip(1 - x * x - y * y, 0, 1))
+    return x, y, z
+
+
+def _blend_normals(a: np.ndarray, b: np.ndarray, m: np.ndarray) -> np.ndarray:
+    """Blends two BGR normal maps as vectors and re-normalizes the result."""
+    ax, ay, az = _decode_normals(a)
+    bx, by, bz = _decode_normals(b)
+    m2 = m[:, :, 0]
+    x = ax * m2 + bx * (1 - m2)
+    y = ay * m2 + by * (1 - m2)
+    z = az * m2 + bz * (1 - m2)
+    length = np.maximum(np.sqrt(x * x + y * y + z * z), 1e-6)
+    out = a * m + b * (1 - m)  # keeps any extra (alpha) channel
     out[:, :, 0] = (z / length + 1) * 0.5
     out[:, :, 1] = (y / length + 1) * 0.5
     out[:, :, 2] = (x / length + 1) * 0.5
-    return out
+    return out.astype(np.float32)
 
 
 def rotate_normal_vectors(
@@ -228,9 +250,10 @@ def _blend(
         m = (m >= 0.5).astype(np.float32)
         return a * m + b * (1 - m)
 
-    out = a * m + b * (1 - m)
     if map_type.is_normal:
-        return _normalize_normals(out, map_type)
+        return _blend_normals(a, b, m)
+
+    out = a * m + b * (1 - m)
 
     if preserve_contrast:
         # Variance-preserving blend (Heitz & Neyret 2018): blending two uncorrelated textures
@@ -286,6 +309,41 @@ def _quincunx_mask(guide: np.ndarray, seed: int, p: QuincunxParams) -> np.ndarra
         m = np.where(m <= 0, 0, np.where(m >= 1, 1, sharp)).astype(np.float32)
 
     return m.astype(np.float32)
+
+
+def _tip_masks(h: int, w: int, seed: int, p: QuincunxParams) -> list[np.ndarray]:
+    """
+    Masks for the 4 tips of the quincunx diamond, where the original's seam (its border) and the
+    diagonal copy's seam (the centre cross) meet, so neither layer is clean there.
+
+    A copy shifted only vertically has its seams on the left/right border and the horizontal
+    centre line, so it is clean at the top/bottom tips (w/2, 0). Likewise, a copy shifted only
+    horizontally is clean at the left/right tips (0, h/2). Blending those in hides the tips with
+    real, continuous content. Both masks wrap around, so the result still tiles.
+    """
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    # Along the border, the diamond mask is non-zero up to (softness + warp) * half-size away
+    # from a tip. The patches' fully-opaque core must cover that whole stretch, even after the
+    # noise shrinks it by up to 15%.
+    reach = (p.softness + p.warp) / 0.85 + 0.03
+    ax = min(reach * w / 2, 0.45 * w)
+    ay = min(reach * h / 2, 0.45 * h)
+
+    def ellipse(dx: np.ndarray, dy: np.ndarray, rx: float, ry: float, noise_seed: int):
+        d = np.sqrt((dx / rx) ** 2 + (dy / ry) ** 2)
+        d = d + 0.15 * _tileable_noise(h, w, max(2, p.warp_detail), noise_seed)
+        return (1 - _smoothstep(1.0, 1.4, d)).astype(np.float32)
+
+    # top/bottom tips (one patch, wrapping across the horizontal border). It must stay clear of
+    # the vertical copy's own seams (left/right border and the horizontal centre line).
+    rx_top, ry_top = min(ax, 0.3 * w), min(ay, 0.3 * h)
+    dy_top = np.minimum(yy + 0.5, h - yy - 0.5)
+    top = ellipse(np.abs(xx + 0.5 - w / 2), dy_top, rx_top, ry_top, seed + 1)
+    # left/right tips (one patch, wrapping across the vertical border)
+    rx_left, ry_left = min(ax, 0.3 * w), min(ay, 0.3 * h)
+    dx_left = np.minimum(xx + 0.5, w - xx - 0.5)
+    left = ellipse(dx_left, np.abs(yy + 0.5 - h / 2), rx_left, ry_left, seed + 2)
+    return [top, left]
 
 
 def _dp_path(cost: np.ndarray, fixed_start: int | None) -> np.ndarray:
@@ -351,18 +409,37 @@ def _plan_min_error_seam(guide: np.ndarray, p: SeamParams) -> list[np.ndarray | 
     return [mx, np.ascontiguousarray(my)]
 
 
+def _wide_mask_x(m: np.ndarray, sigma: float) -> np.ndarray:
+    """
+    A blurred version of an X-pass mask for blending large-scale brightness. It is forced to 0
+    at the left/right border (the original's seam) and to 1 at the vertical centre line (the
+    shifted copy's seam), so the result still tiles.
+    """
+    w = m.shape[1]
+    wide = np.clip(_wrap_blur(m, sigma), 0, 1)
+    x = np.arange(w, dtype=np.float32) + 0.5
+    dist_border = np.minimum(x, w - x) / w
+    dist_centre = np.abs(x - w / 2) / w
+    allow = _smoothstep(0.0, 0.04, dist_border)[np.newaxis, :]
+    force = (1 - _smoothstep(0.0, 0.04, dist_centre))[np.newaxis, :]
+    return np.maximum(np.minimum(wide, allow), force).astype(np.float32)
+
+
+def _plan_low_masks(
+    masks: list[np.ndarray | None], sigma: float
+) -> list[np.ndarray | None]:
+    mx, my = masks
+    return [
+        _wide_mask_x(mx, sigma) if mx is not None else None,
+        np.ascontiguousarray(_wide_mask_x(my.T, sigma).T) if my is not None else None,
+    ]
+
+
 def _plan_splats(seed: int, p: SplatParams) -> list[Splat]:
     rng = np.random.default_rng(seed)
-    # The first splats cover the tips of the quincunx diamond, where a seam may leak.
-    anchors = [(0.0, 0.5), (0.5, 0.0), (0.0, 0.0), (0.5, 0.5)]
     splats: list[Splat] = []
-    for i in range(p.count):
-        if i < len(anchors):
-            cx, cy = anchors[i]
-            cx += rng.uniform(-0.03, 0.03)
-            cy += rng.uniform(-0.03, 0.03)
-        else:
-            cx, cy = rng.uniform(0, 1, 2)
+    for _ in range(p.count):
+        cx, cy = rng.uniform(0, 1, 2)
         radius = p.size * (1 + rng.uniform(-p.size_variation, p.size_variation))
         sx, sy = rng.uniform(0, 1, 2)
         angle = rng.uniform(-p.rotation_variation, p.rotation_variation)
@@ -413,11 +490,22 @@ def create_plan(
     elif method == SeamlessMethod.EDGES_LINEAR_Y:
         plan.masks = _plan_linear(h, w, False, True, linear)
     elif method == SeamlessMethod.EDGES_QUINCUNX:
-        plan.masks = [_quincunx_mask(guide, seed, quincunx)]
+        plan.masks = [
+            _quincunx_mask(guide, seed, quincunx),
+            *_tip_masks(h, w, seed, quincunx),
+        ]
     elif method == SeamlessMethod.MIN_ERROR_SEAM:
         plan.masks = _plan_min_error_seam(guide, seam)
+        if seam.low_freq_blend > 0:
+            plan.band_sigma = seam.low_freq_blend
+            plan.low_masks = _plan_low_masks(
+                plan.masks, seam.low_freq_blend * min(h, w) * 2
+            )
     elif method == SeamlessMethod.SPLAT_RANDOM:
-        plan.masks = [_quincunx_mask(guide, seed, quincunx)]
+        plan.masks = [
+            _quincunx_mask(guide, seed, quincunx),
+            *_tip_masks(h, w, seed, quincunx),
+        ]
         plan.splats = _plan_splats(seed, splat)
         plan.splat_softness = splat.softness
         plan.splat_warp = splat.warp
@@ -430,30 +518,67 @@ def create_plan(
 # --------------------------------------------------------------------------- apply
 
 
+def _wrap_blur_image(img: np.ndarray, sigma: float) -> np.ndarray:
+    p = max(1, math.ceil(sigma * 3))
+    padded = np.pad(img, ((p, p), (p, p), (0, 0)), mode="wrap")
+    return _as3(cv2.GaussianBlur(padded, (0, 0), sigma))[p:-p, p:-p]
+
+
+def _blend_two_band(
+    a: np.ndarray,
+    b: np.ndarray,
+    sharp: np.ndarray,
+    wide: np.ndarray,
+    sigma: float,
+    map_type: MapType,
+) -> np.ndarray:
+    """
+    Fine detail follows the sharp mask, large-scale brightness follows the wide mask
+    (two-band version of Burt & Adelson's multi-band blending).
+    """
+    low_a = _wrap_blur_image(a, sigma)
+    low_b = _wrap_blur_image(b, sigma)
+    s = _as3(sharp)
+    wd = _as3(wide)
+    out = (a - low_a) * s + (b - low_b) * (1 - s) + low_a * wd + low_b * (1 - wd)
+    out = np.clip(out, 0, 1).astype(np.float32)
+    if map_type.is_normal:
+        ones = np.ones_like(s)
+        return _blend_normals(out, out, ones)
+    return out
+
+
 def _apply_two_pass(plan: SeamlessPlan, img: np.ndarray, map_type: MapType):
     h, w = img.shape[:2]
     mx, my = plan.masks
-    if mx is not None:
-        shifted = _roll(img, 0, w // 2)
-        img = _blend(
-            img, shifted, _resize_mask(mx, h, w), map_type, plan.preserve_contrast
-        )
-    if my is not None:
-        shifted = _roll(img, h // 2, 0)
-        img = _blend(
-            img, shifted, _resize_mask(my, h, w), map_type, plan.preserve_contrast
-        )
+    low_x, low_y = plan.low_masks if plan.low_masks else (None, None)
+    two_band = plan.band_sigma > 0 and map_type != MapType.MASK
+    sigma = plan.band_sigma * min(h, w)
+
+    for mask, low, shift in ((mx, low_x, (0, w // 2)), (my, low_y, (h // 2, 0))):
+        if mask is None:
+            continue
+        shifted = _roll(img, *shift)
+        sharp = _resize_mask(mask, h, w)
+        if two_band and low is not None:
+            wide = _resize_mask(low, h, w)
+            img = _blend_two_band(img, shifted, sharp, wide, sigma, map_type)
+        else:
+            img = _blend(img, shifted, sharp, map_type, plan.preserve_contrast)
     return img
 
 
 def _apply_quincunx(plan: SeamlessPlan, img: np.ndarray, map_type: MapType):
     h, w = img.shape[:2]
-    mask = plan.masks[0]
-    assert mask is not None
-    shifted = _roll(img, h // 2, w // 2)
-    return _blend(
-        img, shifted, _resize_mask(mask, h, w), map_type, plan.preserve_contrast
+    mask, top, left = plan.masks
+    assert mask is not None and top is not None and left is not None
+    pc = plan.preserve_contrast
+    out = _blend(
+        img, _roll(img, h // 2, w // 2), _resize_mask(mask, h, w), map_type, pc
     )
+    # patch the 4 diamond tips with copies that are seamless there
+    out = _blend(_roll(img, h // 2, 0), out, _resize_mask(top, h, w), map_type, pc)
+    return _blend(_roll(img, 0, w // 2), out, _resize_mask(left, h, w), map_type, pc)
 
 
 def _apply_splats(plan: SeamlessPlan, img: np.ndarray, map_type: MapType):
@@ -560,11 +685,22 @@ def equalize_lighting(img: np.ndarray, radius: float) -> np.ndarray:
 def seam_ratio(img: np.ndarray) -> float:
     """
     How visible the wrap-around seam is: the mean jump across the border divided by the mean
-    difference between neighbouring pixels. About 1 means seamless.
+    step between the pixels right next to the border. About 1 means seamless.
     """
     img = _as3(img)
-    jump_x = np.abs(img[:, 0] - img[:, -1]).mean()
-    jump_y = np.abs(img[0] - img[-1]).mean()
-    inner_x = np.abs(np.diff(img, axis=1)).mean()
-    inner_y = np.abs(np.diff(img, axis=0)).mean()
-    return float(0.5 * (jump_x / max(inner_x, 1e-8) + jump_y / max(inner_y, 1e-8)))
+
+    def axis_ratio(
+        first: np.ndarray,
+        second: np.ndarray,
+        last: np.ndarray,
+        before_last: np.ndarray,
+    ):
+        jump = np.abs(first - last).mean()
+        inner = 0.5 * (
+            np.abs(second - first).mean() + np.abs(last - before_last).mean()
+        )
+        return jump / max(float(inner), 1e-8)
+
+    rx = axis_ratio(img[:, 0], img[:, 1], img[:, -1], img[:, -2])
+    ry = axis_ratio(img[0], img[1], img[-1], img[-2])
+    return float(0.5 * (rx + ry))

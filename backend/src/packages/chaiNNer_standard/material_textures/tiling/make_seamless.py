@@ -45,12 +45,15 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
         "Makes an image seamlessly tileable by blending it with shifted copies of itself.",
         "### Methods",
         "- **Edges Linear** (and **X**/**Y** only): blends the image with a copy shifted by half its size, using straight transitions. Works well for patterns, but blended areas can look doubled.",
-        "- **Edges Quincunx**: blends with a diagonally shifted copy using a warped diamond mask. A good default for organic textures.",
-        "- **Min-Error Seam**: cuts along the path where the image and its shifted copy look most alike. Best for structured textures such as stones, bricks, or tiles.",
+        "- **Edges Quincunx**: blends with a diagonally shifted copy using a warped diamond mask, and patches the 4 tips of the diamond with copies that are seamless there. Doesn't depend on the image content, so maps stay in sync even without a Guide.",
+        "- **Min-Error Seam** (default): cuts along the path where the image and its shifted copy look most alike, so seams follow the content (e.g. the gaps between stones). Large-scale brightness is blended smoothly so the cut doesn't show on smooth textures. Gave the best results on average in our tests. Seams depend on the content, so connect a Guide when processing a whole material.",
         "- **Splat Random**: starts from Edges Quincunx and stamps soft, randomly placed patches of the image on top. Different seeds give different variations that all tile.",
         "### Processing a whole material",
         "To process several maps of a material (albedo, normal, height, roughness, ...) in exactly the same way, use one *Make Seamless* node per map and connect **the same Guide and Seed** to all of them, with the same settings. A height map makes a good guide. Set **Map Type** for each map so that normal maps and masks are handled correctly.",
         "The maps may have different resolutions, as long as they have the same aspect ratio as the guide.",
+        "Normal maps are read from their red and green channels only (blue is rebuilt), so two-channel normal maps work too.",
+        "### Regular patterns",
+        "Strictly regular patterns (bricks, floor tiles, fabric) only tile if the image contains a whole number of pattern repeats. Crop or resize the image to a whole number of repeats first.",
         "### Bad edges",
         "The methods mostly use the center of the image already. If the edges of a photo are bad (vignetting, lens blur, a ruler in frame, ...), use **Crop Margin** to remove them. Upscaling the cropped image back to its original size does not help: it adds no real detail, and AI upscalers invent different detail for each map of a material.",
     ],
@@ -83,7 +86,7 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
         EnumInput(
             SeamlessMethod,
             label="Method",
-            default=SeamlessMethod.EDGES_QUINCUNX,
+            default=SeamlessMethod.MIN_ERROR_SEAM,
             option_labels={
                 SeamlessMethod.EDGES_LINEAR: "Edges Linear",
                 SeamlessMethod.EDGES_LINEAR_X: "Edges Linear X",
@@ -130,6 +133,11 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
             SliderInput(
                 "Seam Feather", min=0, max=20, default=2, precision=1, unit="px"
             ).with_id(11),
+            SliderInput("Smooth Blend", min=0, max=10, default=3, precision=1, unit="%")
+            .with_docs(
+                "Large-scale brightness is blended over a transition of this size, so the cut doesn't show as a step on smooth textures. 0 disables it."
+            )
+            .with_id(22),
         ),
         if_enum_group(3, SeamlessMethod.SPLAT_RANDOM)(
             NumberInput("Splat Count", min=1, max=500, default=24).with_id(12),
@@ -198,6 +206,7 @@ def make_seamless_node(
     content_influence: float,
     search_width: float,
     seam_feather: float,
+    smooth_blend: float,
     splat_count: int,
     splat_size: float,
     size_variation: float,
@@ -239,7 +248,11 @@ def make_seamless_node(
             warp_detail=warp_detail,
             content_influence=content_influence / 100,
         ),
-        seam=SeamParams(search_width=search_width / 100, feather=seam_feather),
+        seam=SeamParams(
+            search_width=search_width / 100,
+            feather=seam_feather,
+            low_freq_blend=smooth_blend / 100,
+        ),
         splat=SplatParams(
             count=splat_count,
             size=splat_size / 100,
