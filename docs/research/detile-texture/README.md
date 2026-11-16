@@ -281,6 +281,48 @@ Robustness:
 
 ---
 
+## 7. Automatic method choice (prototype)
+
+Prototype: [`prototype/classify.py`](prototype/classify.py). Tested on 5 synthetic texture
+types × 3 seeds (stones, sand/plaster, clouds, wood fibres, bricks).
+
+### Features (all from the guide, so every map of a stack gets the same decision)
+| Feature | Measures | Separation in the test |
+|---|---|---|
+| Periodicity | prominence of the strongest autocorrelation peak (a real repeat dips and rises again; smooth content only decays). Measured on vertical and horizontal edges separately, which also gives the **repeat size** | bricks 0.87, everything else ≤ 0.27 |
+| One direction | resultant of doubled gradient angles | wood 0.6, everything else ≤ 0.33 |
+| Right angles | resultant of quadrupled gradient angles | bricks 0.71, everything else ≤ 0.33 |
+| Smoothness | share of variance in large-scale brightness | sand/clouds ≥ 0.87, others ≤ 0.53 |
+
+Repeat size: 76 px brick width found every time. For height it found 64 (2 staggered rows) or
+32 (1 row); both work, because the fit uses an even number of repeats.
+
+### What the decision changes
+After the two-band fix (§3.3), Min-Error Seam was best or tied for **every non-repeating
+class** (stones, sand, clouds, wood). So for organic textures, "Auto" and "Min-Error Seam"
+give the same result. The decision that matters is **repeating pattern or not**:
+
+- Strictly regular patterns only tile if the image holds a whole number of repeats. No
+  blending can fix misaligned rows.
+- **Pattern fit:** resample the image so it holds an *even* whole number of repeats per axis.
+  That is a slight rescale (worst case half a repeat over the image; at 2K with 76 px bricks
+  about 0.4%). Then the half-size shift used by every method is itself a whole number of
+  repeats, and Min-Error Seam cuts along matching structure.
+
+![pattern fit](images/pattern_fit.jpg)
+
+(Zoom on the junction where 4 tiles meet.) Plain Min-Error steps grooves on CG panels.
+"Fitted only" doubles a groove at the junction. Fitted + Min-Error is seamless, and the best of
+the four for hand-laid bricks too.
+
+### Limits
+- Photos of brick walls with perspective or lens distortion have a repeat size that changes
+  across the image. A single fit can't fix that; it would need rectification first.
+- Fitting rescales content slightly, so it should be visible and controllable (Off / Auto / On).
+- Patterns that repeat in only one axis (planks) should be fitted per axis.
+
+---
+
 ## Sources
 - [B2M — Make your image tile](https://helpx.adobe.com/substance-3d-b2m/desktop/main-features/make-your-image-tile.html), [B2M parameters](https://helpx.adobe.com/substance-3d-b2m/desktop/parameters.html), [B2M3 Randomize](https://substance3d.adobe.com/documentation/b2m3/randomize-67797032.html), [Bitmap2Material 2 manual](https://usermanual.wiki/Pdf/bitmap2material2manual.1323014820/html)
 - [Make It Tile Photo/Patch parameters (ArtStation)](https://badraztt.artstation.com/blog/q0v7/make-it-tile-substance-painter-filter), [Smart Auto Tile](https://helpx.adobe.com/substance-3d-designer/substance-compositing-graphs/nodes-reference-for-substance-compositing-graphs/node-library/material-filters/scan-processing/smart-auto-tile.html)
