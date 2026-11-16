@@ -5,6 +5,11 @@ families of methods found in Substance Bitmap2Material (B2M), plus other techniq
 feasible in chaiNNer. It should also be able to process a whole PBR stack (albedo, normal,
 height, roughness, metal, AO, …) with **exactly the same** operation, so the maps stay aligned.
 
+> **Status:** Node 1 (*Make Seamless*, §5) is implemented in
+> `backend/src/nodes/impl/seamless.py` and
+> `backend/src/packages/chaiNNer_standard/material_textures/tiling/make_seamless.py`, with tests in
+> `backend/tests/test_seamless.py`. Offset + Inpaint was intentionally left out.
+
 All findings below were checked with a working numpy/OpenCV prototype
 ([`prototype/detile.py`](prototype/detile.py), demo in [`prototype/demo.py`](prototype/demo.py)).
 
