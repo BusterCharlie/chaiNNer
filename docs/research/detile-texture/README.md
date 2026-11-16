@@ -292,14 +292,18 @@ Min-Error Seam (with the two-band fix) was the best general method on real data 
 
 So "Auto" has one real decision to make: **is it a repeating pattern, and in which axis?**
 
-### From "pattern fit" to "Pattern Align"
-- The first idea was to crop/resample the image to a whole number of repeats. That isn't
-  needed: the methods only require the **shift** between the image and its copy to be a whole
-  number of repeats. The output at the wrap always comes from the copy, which is continuous
-  there; at the cuts both sides are then in phase. So there's no rescaling and no content loss,
-  and it works per axis.
-- Shift search: normalized self-correlation of the image detail for shifts of 35–65% of the
-  size. The shift is aligned only if it matches at least 0.2 better than half the size.
+### Pattern Align = shift search + pattern fit
+- **Shift:** the normalized self-correlation of the image detail, for shifts of 35–65% of the
+  size. An axis counts as a pattern if it matches at least 0.2 better than at half the size.
+- **Fit (needed):** the copy's content at the *left* cut comes from wrapping around the image
+  edge, so it is offset by `size − shift`. Both cuts only line up if the shift **and** the size
+  are whole numbers of repeats. A first version that aligned only the shift fixed one cut and
+  left doubled grout lines on `interior_tiles`.
+- **So:** estimate the repeat to sub-pixel accuracy (the smallest peak dividing the aligned
+  shift whose multiples all match ≥ 80% as well; refined over all multiples), crop the centre to
+  a whole number of repeats, resample back to the original size (at most 1.15× scaling,
+  otherwise shift-only), then shift by a whole number of repeats. The shift is derived from the
+  verified shift, so it is safe even if the repeat estimate were a fraction of the real one.
 - **Rejected criterion: Min-Error cut cost.** On a panel grid, a half-size cut runs through
   flat panel interiors where both copies agree. The cut looked fine, but the result had
   wrong-width panels.
@@ -338,6 +342,22 @@ Metric: leftover large-scale brightness variation.
   contrast is *inverted*: flat metal is bright and the raised diamonds are dark, the reverse of
   elsewhere. This needs diffuse light when shooting (overcast, or cross-polarized flash), or
   replacing the hotspot area with content from elsewhere.
+
+## 9. Perspective correction (prototype)
+
+[`prototype/perspective.py`](prototype/perspective.py). Three modes:
+- **Guided:** 4 corner points → `getPerspectiveTransform`. Always reliable.
+- **Automatic, lines:** LSD segments, RANSAC vanishing points for the near-vertical and
+  near-horizontal families, then send the vanishing line to infinity and make both families
+  axis-aligned. X/Y scale is kept equal at the image centre. A tilted wall photo used 105 vertical
+  and 74 horizontal segments and came out with parallel verticals (0.3 s at 2.9K × 3.9K).
+- **Automatic, pattern:** search the two perspective parameters that maximize the self-match
+  peaks of the detail. On a Poly Haven metal plate tilted by known amounts it recovered the tilt
+  with residual ≤ 0.013 (regularity back to the untilted 0.55), in about 1.3 s. On a real tilted
+  tread-plate photo it raised regularity from 0.60 to 0.76, and Pattern Align then found the
+  vertical repeat (none before).
+- **To do:** rotation (deskew) in the pattern search, so lattices photographed slightly rotated
+  get exact horizontal repeats too.
 
 ---
 

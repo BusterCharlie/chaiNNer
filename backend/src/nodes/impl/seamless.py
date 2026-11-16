@@ -128,6 +128,10 @@ class SeamlessPlan:
     """Vertical shift of the copy, as a fraction of the height (two-pass methods)."""
     info: list[str] = field(default_factory=list)
     """Human-readable notes about automatic decisions."""
+    fit_x: float = 1.0
+    """Fraction of the width kept (centred) and resampled to full width by pattern fitting."""
+    fit_y: float = 1.0
+    """Fraction of the height kept (centred) and resampled to full height."""
 
 
 # --------------------------------------------------------------------------- utilities
@@ -526,6 +530,110 @@ def _aligned_shift_x(g: np.ndarray) -> tuple[int, float, float]:
     return best_s, at_half, float(corr[best])
 
 
+MAX_FIT_SCALE = 1.15
+"""Pattern fitting may enlarge the content by at most this factor."""
+
+
+def _estimate_period(g: np.ndarray, shift: int) -> float:
+    """
+    The repeat length (in pixels, sub-pixel accurate) of a horizontal pattern in `g`, given a
+    shift at which the pattern lines up (a whole number of repeats).
+    """
+    w = g.shape[1]
+    corr = _self_correlation(g)
+    # fundamental: the smallest peak that divides the aligned shift and whose multiples all
+    # line up nearly as well as the shift itself. Structure that is constant along the axis
+    # (e.g. horizontal grooves for a horizontal shift) raises the correlation at every lag,
+    # so a weak threshold would accept fractions of the true repeat.
+    target = 0.8 * float(corr[shift])
+    period = float(shift)
+    for lag in range(max(4, w // 200), shift // 2 + 1):
+        if not (corr[lag] >= corr[lag - 1] and corr[lag] >= corr[lag + 1]):
+            continue
+        ratio = shift / lag
+        if abs(ratio - round(ratio)) > 0.12:
+            continue
+        p = shift / round(ratio)
+        multiples = np.arange(1, round(ratio) + 1) * p
+        if float(np.interp(multiples, np.arange(w), corr).min()) >= target:
+            period = p
+            break
+
+    # refine: the period whose multiples (up to half the size) line up best
+    def score(p: float) -> float:
+        lags = np.arange(1, max(2, int(w / 2 / p)) + 1) * p
+        lags = lags[lags < w - 1]
+        return float(np.interp(lags, np.arange(w), corr).sum())
+
+    candidates = [period + d for d in np.arange(-1.0, 1.0001, 0.02).tolist()]
+    return float(max(candidates, key=score))
+
+
+def _fit_image(
+    img: np.ndarray, fit_x: float, fit_y: float, map_type: MapType
+) -> np.ndarray:
+    """Keeps the centred fit_x * fit_y part of the image and resamples it to full size."""
+    if fit_x >= 1 and fit_y >= 1:
+        return img
+    h, w = img.shape[:2]
+    # output pixel centre (x + 0.5) samples input position ox + (x + 0.5) * fit_x
+    ox = (w - w * fit_x) / 2
+    oy = (h - h * fit_y) / 2
+    matrix = np.array(
+        [
+            [fit_x, 0, ox + 0.5 * fit_x - 0.5],
+            [0, fit_y, oy + 0.5 * fit_y - 0.5],
+        ],
+        np.float32,
+    )
+    interpolation = cv2.INTER_NEAREST if map_type == MapType.MASK else cv2.INTER_CUBIC
+    out = cv2.warpAffine(
+        img,
+        matrix,
+        (w, h),
+        flags=interpolation | cv2.WARP_INVERSE_MAP,
+        borderMode=cv2.BORDER_REFLECT,
+    )
+    out = _as3(out).astype(np.float32)
+    if map_type != MapType.MASK:
+        out = np.clip(out, 0, 1)
+    return out
+
+
+def _fit_axis(g: np.ndarray, shift: int) -> tuple[float, int, str]:
+    """
+    Pattern fitting for one axis (horizontal; transpose for vertical). Returns the fraction of
+    the size to keep, the shift to use after fitting, and a note. Both cuts of a two-pass method
+    only line up if the shift AND the size minus the shift are whole numbers of repeats, so the
+    image must hold a whole number of repeats.
+    """
+    n = g.shape[1]
+    period = _estimate_period(g, shift)
+    repeats = int(n // period)
+    if repeats < 2:
+        return 1.0, shift, f"repeat of {period:.1f} px is too large to fit"
+    scale = n / (repeats * period)
+    if scale > MAX_FIT_SCALE:
+        return (
+            1.0,
+            shift,
+            f"repeat of {period:.1f} px would need {scale:.2f}x scaling to fit, "
+            "so only the shift is aligned",
+        )
+    fit = repeats * period / n
+    # The shift that was verified to line up, as a whole number of repeats, in fitted pixels.
+    # (Derived from the verified shift rather than from the repeat count, so it stays a true
+    # repeat of the pattern even if the period estimate were a fraction of the real one.)
+    in_repeats = max(1, round(shift / period))
+    new_shift = round(in_repeats * period / fit)
+    return (
+        fit,
+        new_shift,
+        f"fitted to {repeats} repeats of {period:.1f} px (content scaled by {scale:.3f}), "
+        f"shift {in_repeats} repeats",
+    )
+
+
 def _plan_splats(seed: int, p: SplatParams) -> list[Splat]:
     rng = np.random.default_rng(seed)
     splats: list[Splat] = []
@@ -584,26 +692,36 @@ def create_plan(
     )
     if pattern_align and two_pass:
         g = _luminance(guide)
+        gt = np.ascontiguousarray(g.T)
         sx, half_x, best_x = _aligned_shift_x(g)
-        sy, half_y, best_y = _aligned_shift_x(np.ascontiguousarray(g.T))
-        for axis, s, n, c_half, c_best in (
-            ("X", sx, w, half_x, best_x),
-            ("Y", sy, h, half_y, best_y),
+        sy, half_y, best_y = _aligned_shift_x(gt)
+        fits = {}
+        for axis, s, n, c_half, c_best, gg in (
+            ("X", sx, w, half_x, best_x, g),
+            ("Y", sy, h, half_y, best_y, gt),
         ):
             if s == n // 2 and c_half >= MIN_ALIGN_GAIN:
                 plan.info.append(
                     f"{axis}: the pattern already lines up at half the size "
                     f"(self-match {c_half:.2f})."
                 )
+                fits[axis] = (1.0, s)
             elif s == n // 2:
                 plan.info.append(
                     f"{axis}: no repeating pattern found, shift is half the size."
                 )
+                fits[axis] = (1.0, s)
             else:
+                fit, new_shift, note = _fit_axis(gg, s)
                 plan.info.append(
-                    f"{axis}: aligned to the pattern, shift {s / n * 100:.1f}% of the "
-                    f"size (self-match {c_half:.2f} -> {c_best:.2f})."
+                    f"{axis}: repeating pattern (self-match {c_half:.2f} -> {c_best:.2f}), "
+                    f"{note}."
                 )
+                fits[axis] = (fit, new_shift)
+        plan.fit_x, sx = fits["X"]
+        plan.fit_y, sy = fits["Y"]
+        if plan.fit_x < 1 or plan.fit_y < 1:
+            guide = _fit_image(guide, plan.fit_x, plan.fit_y, MapType.COLOR)
     plan.shift_x, plan.shift_y = sx / w, sy / h
 
     if method == SeamlessMethod.EDGES_LINEAR:
@@ -754,6 +872,7 @@ def apply_plan(plan: SeamlessPlan, img: np.ndarray, map_type: MapType) -> np.nda
     img = _as3(img).astype(np.float32)
     if map_type.is_normal:
         assert img.shape[2] >= 3, "Normal maps must have at least 3 channels."
+    img = _fit_image(img, plan.fit_x, plan.fit_y, map_type)
 
     if plan.method in (
         SeamlessMethod.EDGES_LINEAR,
@@ -769,6 +888,9 @@ def apply_plan(plan: SeamlessPlan, img: np.ndarray, map_type: MapType) -> np.nda
     else:
         raise AssertionError(f"Unknown method {plan.method}")
 
+    if map_type.is_normal:
+        # resampling (pattern fit, rotated splats) leaves vectors slightly off unit length
+        out = _blend_normals(out, out, np.ones_like(out[:, :, :1]))
     return out
 
 

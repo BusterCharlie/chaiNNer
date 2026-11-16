@@ -267,24 +267,31 @@ def panels(h: int, w: int, period: int, seed: int) -> np.ndarray:
 def test_pattern_align_shifts_by_whole_repeats():
     img = panels(300, 384, 70, seed=0)  # neither side is a multiple of 70
     plan = create_plan(img, SeamlessMethod.MIN_ERROR_SEAM, 1, pattern_align=True)
-    for fraction, size in ((plan.shift_x, 384), (plan.shift_y, 300)):
-        shift = round(fraction * size)
-        off = shift % 70
-        assert min(off, 70 - off) <= 2, (shift, size)
-    assert all("aligned" in line for line in plan.info), plan.info
+    # After fitting, the image holds a whole number of repeats and the shift is a whole number
+    # of repeats too. In output pixels, one repeat is 70 / fit.
+    for fraction, fit, size in (
+        (plan.shift_x, plan.fit_x, 384),
+        (plan.shift_y, plan.fit_y, 300),
+    ):
+        repeat = 70 / fit
+        for length in (size, round(fraction * size)):
+            off = length % repeat
+            assert min(off, repeat - off) <= 1.5, (length, repeat)
+    assert all("fitted to" in line for line in plan.info), plan.info
 
     aligned = apply_plan(plan, img, MapType.COLOR)
     plain = run(img, SeamlessMethod.MIN_ERROR_SEAM)
 
     # A correctly aligned result is still a regular pattern: it matches itself one repeat away.
     # Measured inside the image, above the noise floor of the (perfectly regular) input.
-    def irregularity(out: np.ndarray) -> float:
-        return float(np.abs(out[:, 70:] - out[:, :-70]).mean())
+    def irregularity(out: np.ndarray, repeat: float) -> float:
+        r = round(repeat)
+        return float(np.abs(out[:, r:] - out[:, :-r]).mean())
 
-    floor = irregularity(img)
-    excess_aligned = irregularity(aligned) - floor
-    excess_plain = irregularity(plain) - floor
-    assert excess_aligned < 0.5 * excess_plain, (excess_aligned, excess_plain)
+    floor = irregularity(img, 70)
+    excess_aligned = irregularity(aligned, 70 / plan.fit_x) - floor
+    excess_plain = irregularity(plain, 70) - floor
+    assert excess_aligned < 0.25 * excess_plain, (excess_aligned, excess_plain)
     assert seam_ratio(aligned) < 1.6
 
 
@@ -307,7 +314,7 @@ def test_pattern_align_keeps_half_shift_without_pattern():
 def test_aligned_shift_still_tiles(method: SeamlessMethod, map_type: MapType):
     guide = panels(300, 384, 70, seed=1)
     plan = create_plan(guide, method, 1, pattern_align=True)
-    assert plan.shift_x != 0.5
+    assert plan.fit_x < 1 and plan.fit_y < 1, plan.info
     if map_type == MapType.NORMAL_GL:
         img = normal_from_height(smooth_random(300, 384, 1, seed=2)[:, :, 0], map_type)
     elif map_type == MapType.MASK:
