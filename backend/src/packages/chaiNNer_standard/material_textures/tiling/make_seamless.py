@@ -13,6 +13,7 @@ from nodes.impl.seamless import (
     SplatParams,
     apply_plan,
     create_plan,
+    crop_margin_fraction,
     equalize_lighting,
 )
 from nodes.properties.inputs import (
@@ -50,6 +51,8 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
         "### Processing a whole material",
         "To process several maps of a material (albedo, normal, height, roughness, ...) in exactly the same way, use one *Make Seamless* node per map and connect **the same Guide and Seed** to all of them, with the same settings. A height map makes a good guide. Set **Map Type** for each map so that normal maps and masks are handled correctly.",
         "The maps may have different resolutions, as long as they have the same aspect ratio as the guide.",
+        "### Bad edges",
+        "The methods mostly use the center of the image already. If the edges of a photo are bad (vignetting, lens blur, a ruler in frame, ...), use **Crop Margin** to remove them. Upscaling the cropped image back to its original size does not help: it adds no real detail, and AI upscalers invent different detail for each map of a material.",
     ],
     icon="MdGridOn",
     inputs=[
@@ -91,6 +94,12 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
             },
         ).with_id(3),
         seed_group(SeedInput().with_id(4)),
+        SliderInput("Crop Margin", min=0, max=25, default=0, precision=1, unit="%")
+        .with_docs(
+            "Crops this much from every side of the image (and the guide) before making it seamless. Use it to drop bad edges of a photo, e.g. vignetting, lens blur, or a ruler in frame.",
+            "The margin is a percentage, so maps of different resolutions are cropped to the same area.",
+        )
+        .with_id(21),
         if_enum_group(3, LINEAR_METHODS)(
             SliderInput(
                 "Transition Width", min=1, max=100, default=50, precision=1, unit="%"
@@ -159,7 +168,20 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
         ),
     ],
     outputs=[
-        ImageOutput(shape_as=0),
+        ImageOutput(
+            image_type="""
+                let margin = Input21;
+                let mx = floor(Input0.width * margin / 100);
+                let my = floor(Input0.height * margin / 100);
+                // The clamps never change the result (the margin is at most 25%),
+                // they only help the type system when the size is unknown.
+                Image {
+                    width: min(Input0.width, max(1, Input0.width - 2 * mx)),
+                    height: min(Input0.height, max(1, Input0.height - 2 * my)),
+                    channels: Input0.channels,
+                }
+            """,
+        ),
     ],
 )
 def make_seamless_node(
@@ -168,6 +190,7 @@ def make_seamless_node(
     map_type: MapType,
     method: SeamlessMethod,
     seed: Seed,
+    crop_margin: float,
     transition_width: float,
     transition_softness: float,
     mask_warp: float,
@@ -185,6 +208,10 @@ def make_seamless_node(
     equalize_radius: float,
     preserve_contrast: bool,
 ) -> np.ndarray:
+    img = crop_margin_fraction(img, crop_margin)
+    if guide is not None:
+        guide = crop_margin_fraction(guide, crop_margin)
+
     h, w, _ = get_h_w_c(img)
 
     if guide is not None:

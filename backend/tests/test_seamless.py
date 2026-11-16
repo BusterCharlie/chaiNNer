@@ -17,6 +17,7 @@ from nodes.impl.seamless import (
     SplatParams,
     apply_plan,
     create_plan,
+    crop_margin_fraction,
     equalize_lighting,
     rotate_normal_vectors,
     seam_ratio,
@@ -189,3 +190,29 @@ def test_equalize_lighting_removes_gradient():
     left = out[:, :32].mean()
     right = out[:, -32:].mean()
     assert abs(left - right) < 0.05
+
+
+@pytest.mark.parametrize(
+    ("w", "h", "percent", "expected"),
+    [
+        (1000, 750, 7.5, (638, 850)),
+        (2049, 1024, 12.3, (774, 1545)),
+        (1, 1, 25, (1, 1)),
+        (512, 512, 0, (512, 512)),
+    ],
+)
+def test_crop_margin_size(w: int, h: int, percent: float, expected: tuple[int, int]):
+    # These sizes must match the node's output type expression (checked with navi).
+    img = np.zeros((h, w, 3), np.float32)
+    assert crop_margin_fraction(img, percent).shape[:2] == expected
+
+
+def test_crop_margin_same_area_across_resolutions():
+    full = smooth_random(200, 200, 3, seed=10)
+    half = cv2.resize(full, (100, 100), interpolation=cv2.INTER_AREA)
+    a = crop_margin_fraction(full, 10)
+    b = crop_margin_fraction(half, 10)
+    assert a.shape[:2] == (160, 160)
+    assert b.shape[:2] == (80, 80)
+    downscaled = cv2.resize(a, (80, 80), interpolation=cv2.INTER_AREA)
+    assert np.abs(downscaled - b).mean() < 0.01

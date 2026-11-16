@@ -526,6 +526,19 @@ def apply_plan(plan: SeamlessPlan, img: np.ndarray, map_type: MapType) -> np.nda
 # --------------------------------------------------------------------------- pre-pass
 
 
+def crop_margin_fraction(img: np.ndarray, percent: float) -> np.ndarray:
+    """
+    Crops `percent`% of the width/height from every side. The margin in pixels is
+    `floor(size * percent / 100)`, which must match the node's output type expression.
+    """
+    if percent <= 0:
+        return img
+    h, w, _ = get_h_w_c(img)
+    mx = math.floor(w * percent / 100)
+    my = math.floor(h * percent / 100)
+    return img[my : h - my, mx : w - mx]
+
+
 def equalize_lighting(img: np.ndarray, radius: float) -> np.ndarray:
     """
     Removes low-frequency lighting (e.g. a baked gradient) by dividing out a heavy blur while
