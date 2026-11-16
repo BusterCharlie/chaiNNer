@@ -15,6 +15,7 @@ from nodes.impl.seamless import (
     create_plan,
     crop_margin_fraction,
     equalize_lighting,
+    height_from_normals,
 )
 from nodes.properties.inputs import (
     BoolInput,
@@ -24,7 +25,7 @@ from nodes.properties.inputs import (
     SeedInput,
     SliderInput,
 )
-from nodes.properties.outputs import ImageOutput
+from nodes.properties.outputs import ImageOutput, TextOutput
 from nodes.utils.seed import Seed
 from nodes.utils.utils import get_h_w_c
 
@@ -36,6 +37,7 @@ LINEAR_METHODS = (
     SeamlessMethod.EDGES_LINEAR_Y,
 )
 QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
+TWO_PASS_METHODS = (*LINEAR_METHODS, SeamlessMethod.MIN_ERROR_SEAM)
 
 
 @tiling_group.register(
@@ -51,9 +53,9 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
         "### Processing a whole material",
         "To process several maps of a material (albedo, normal, height, roughness, ...) in exactly the same way, use one *Make Seamless* node per map and connect **the same Guide and Seed** to all of them, with the same settings. A height map makes a good guide. Set **Map Type** for each map so that normal maps and masks are handled correctly.",
         "The maps may have different resolutions, as long as they have the same aspect ratio as the guide.",
-        "Normal maps are read from their red and green channels only (blue is rebuilt), so two-channel normal maps work too.",
+        "Normal maps are read from their red and green channels only (blue is rebuilt), so two-channel normal maps work too. A normal map without a Guide uses a height map reconstructed from its normals as its guide.",
         "### Regular patterns",
-        "Strictly regular patterns (bricks, floor tiles, fabric) only tile if the image contains a whole number of pattern repeats. Crop or resize the image to a whole number of repeats first.",
+        "Regular patterns (bricks, floor tiles, fabric, tread plate) need the shifted copy to be a whole number of pattern repeats away, or rows and grooves won't line up. **Align to Pattern** finds such a shift automatically for Min-Error Seam and the Linear methods. The **Info** output tells you what was found.",
         "### Bad edges",
         "The methods mostly use the center of the image already. If the edges of a photo are bad (vignetting, lens blur, a ruler in frame, ...), use **Crop Margin** to remove them. Upscaling the cropped image back to its original size does not help: it adds no real detail, and AI upscalers invent different detail for each map of a material.",
     ],
@@ -97,6 +99,14 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
             },
         ).with_id(3),
         seed_group(SeedInput().with_id(4)),
+        if_enum_group(3, TWO_PASS_METHODS)(
+            BoolInput("Align to Pattern", default=True)
+            .with_docs(
+                "Shifts the copy by a whole number of pattern repeats (e.g. bricks or tiles) instead of exactly half the image, so regular patterns stay aligned. Textures without a pattern keep the half-size shift.",
+                "The decision is made from the guide, so connect the same guide to every map of a material.",
+            )
+            .with_id(23),
+        ),
         SliderInput("Crop Margin", min=0, max=25, default=0, precision=1, unit="%")
         .with_docs(
             "Crops this much from every side of the image (and the guide) before making it seamless. Use it to drop bad edges of a photo, e.g. vignetting, lens blur, or a ruler in frame.",
@@ -190,6 +200,7 @@ QUINCUNX_METHODS = (SeamlessMethod.EDGES_QUINCUNX, SeamlessMethod.SPLAT_RANDOM)
                 }
             """,
         ),
+        TextOutput("Info"),
     ],
 )
 def make_seamless_node(
@@ -198,6 +209,7 @@ def make_seamless_node(
     map_type: MapType,
     method: SeamlessMethod,
     seed: Seed,
+    align_to_pattern: bool,
     crop_margin: float,
     transition_width: float,
     transition_softness: float,
@@ -216,7 +228,7 @@ def make_seamless_node(
     equalize: bool,
     equalize_radius: float,
     preserve_contrast: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, str]:
     img = crop_margin_fraction(img, crop_margin)
     if guide is not None:
         guide = crop_margin_fraction(guide, crop_margin)
@@ -234,8 +246,14 @@ def make_seamless_node(
     if is_color and equalize:
         img = equalize_lighting(img, equalize_radius / 100)
 
+    info: list[str] = []
     if guide is None:
-        guide = img
+        if map_type.is_normal:
+            # The colors of a normal map encode slope directions, not shapes.
+            guide = height_from_normals(img, map_type)
+            info.append("Guide: height reconstructed from the normal map.")
+        else:
+            guide = img
 
     plan = create_plan(
         guide,
@@ -262,6 +280,8 @@ def make_seamless_node(
             warp=splat_warp / 100,
         ),
         preserve_contrast=is_color and preserve_contrast,
+        pattern_align=align_to_pattern and method in TWO_PASS_METHODS,
     )
+    info.extend(plan.info)
 
-    return apply_plan(plan, img, map_type)
+    return apply_plan(plan, img, map_type), "\n".join(info)

@@ -19,6 +19,7 @@ from nodes.impl.seamless import (
     create_plan,
     crop_margin_fraction,
     equalize_lighting,
+    height_from_normals,
     rotate_normal_vectors,
     seam_ratio,
 )
@@ -250,3 +251,83 @@ def test_normals_ignore_blue_channel(method: SeamlessMethod):
     a = apply_plan(plan, normal, MapType.NORMAL_GL)
     b = apply_plan(plan, no_blue, MapType.NORMAL_GL)
     assert np.abs(a - b).max() < 0.02
+
+
+def panels(h: int, w: int, period: int, seed: int) -> np.ndarray:
+    """A strictly regular grid of panels with grooves and rivets, plus grain."""
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    groove = ((xx % period) < 3) | ((yy % period) < 3)
+    rivet = np.hypot((xx % period) - 10, (yy % period) - 10) < 3
+    base = np.where(groove, 0.2, 0.55).astype(np.float32)
+    base[rivet] = 0.8
+    noise = np.random.default_rng(seed).normal(0, 0.02, (h, w)).astype(np.float32)
+    return np.repeat(np.clip(base + noise, 0, 1)[:, :, np.newaxis], 3, axis=2)
+
+
+def test_pattern_align_shifts_by_whole_repeats():
+    img = panels(300, 384, 70, seed=0)  # neither side is a multiple of 70
+    plan = create_plan(img, SeamlessMethod.MIN_ERROR_SEAM, 1, pattern_align=True)
+    for fraction, size in ((plan.shift_x, 384), (plan.shift_y, 300)):
+        shift = round(fraction * size)
+        off = shift % 70
+        assert min(off, 70 - off) <= 2, (shift, size)
+    assert all("aligned" in line for line in plan.info), plan.info
+
+    aligned = apply_plan(plan, img, MapType.COLOR)
+    plain = run(img, SeamlessMethod.MIN_ERROR_SEAM)
+
+    # A correctly aligned result is still a regular pattern: it matches itself one repeat away.
+    # Measured inside the image, above the noise floor of the (perfectly regular) input.
+    def irregularity(out: np.ndarray) -> float:
+        return float(np.abs(out[:, 70:] - out[:, :-70]).mean())
+
+    floor = irregularity(img)
+    excess_aligned = irregularity(aligned) - floor
+    excess_plain = irregularity(plain) - floor
+    assert excess_aligned < 0.5 * excess_plain, (excess_aligned, excess_plain)
+    assert seam_ratio(aligned) < 1.6
+
+
+def test_pattern_align_keeps_half_shift_without_pattern():
+    img = smooth_random(128, 160, 3, seed=12)
+    plan = create_plan(img, SeamlessMethod.MIN_ERROR_SEAM, 1, pattern_align=True)
+    assert plan.shift_x == 0.5
+    assert plan.shift_y == 0.5
+    assert not any("aligned to the pattern" in line for line in plan.info), plan.info
+
+
+@pytest.mark.parametrize(
+    "map_type", [MapType.COLOR, MapType.NORMAL_GL, MapType.MASK], ids=str
+)
+@pytest.mark.parametrize(
+    "method",
+    [SeamlessMethod.EDGES_LINEAR, SeamlessMethod.MIN_ERROR_SEAM],
+    ids=str,
+)
+def test_aligned_shift_still_tiles(method: SeamlessMethod, map_type: MapType):
+    guide = panels(300, 384, 70, seed=1)
+    plan = create_plan(guide, method, 1, pattern_align=True)
+    assert plan.shift_x != 0.5
+    if map_type == MapType.NORMAL_GL:
+        img = normal_from_height(smooth_random(300, 384, 1, seed=2)[:, :, 0], map_type)
+    elif map_type == MapType.MASK:
+        img = (smooth_random(300, 384, 3, seed=3) > 0.5).astype(np.float32)
+    else:
+        img = smooth_random(300, 384, 3, seed=3)
+    out = apply_plan(plan, img, map_type)
+    assert seam_ratio(out) < 1.6
+    # the same plan at half resolution (stack sync)
+    half = cv2.resize(img, (192, 150), interpolation=cv2.INTER_AREA)
+    if map_type == MapType.MASK:
+        half = (half > 0.5).astype(np.float32)
+    assert seam_ratio(apply_plan(plan, half, map_type)) < 1.6
+
+
+@pytest.mark.parametrize("map_type", [MapType.NORMAL_GL, MapType.NORMAL_DX], ids=str)
+def test_height_from_normals_recovers_shapes(map_type: MapType):
+    height = smooth_random(128, 128, 1, seed=13)[:, :, 0]
+    normal = normal_from_height(height, map_type)
+    recovered = height_from_normals(normal, map_type)
+    detail = height - cv2.GaussianBlur(height, (0, 0), 8)
+    corr = np.corrcoef(detail.ravel(), recovered.ravel())[0, 1]
+    assert corr > 0.6, corr

@@ -122,6 +122,12 @@ class SeamlessPlan:
     """Optional wide masks for the low-frequency band (two-band blending)."""
     band_sigma: float = 0.0
     """Blur sigma separating the two bands, as a fraction of the short side."""
+    shift_x: float = 0.5
+    """Horizontal shift of the copy, as a fraction of the width (two-pass methods)."""
+    shift_y: float = 0.5
+    """Vertical shift of the copy, as a fraction of the height (two-pass methods)."""
+    info: list[str] = field(default_factory=list)
+    """Human-readable notes about automatic decisions."""
 
 
 # --------------------------------------------------------------------------- utilities
@@ -267,17 +273,28 @@ def _blend(
 # --------------------------------------------------------------------------- plans
 
 
-def _ramp(n: int, width: float) -> np.ndarray:
-    """1D mask: 0 at both borders, 1 in the middle."""
-    x = np.abs(np.arange(n, dtype=np.float32) + 0.5 - n / 2) / (n / 2)
-    return 1 - _smoothstep(1 - max(width, 1e-3), 1.0, x)
+def _shift_px(fraction: float, n: int) -> int:
+    """A shift given as a fraction of the size, in pixels (never 0 or n)."""
+    return min(max(round(fraction * n), 1), n - 1)
+
+
+def _ramp(n: int, width: float, s: int | None = None) -> np.ndarray:
+    """
+    1D mask: 0 at both borders (the original's seam), 1 at position `s` (the seam of the copy
+    shifted by `s`). `s` defaults to the middle.
+    """
+    if s is None:
+        s = n // 2
+    x = np.arange(n, dtype=np.float32) + 0.5
+    u = np.where(x < s, x / s, (n - x) / (n - s))
+    return _smoothstep(0.0, max(width, 1e-3), u).astype(np.float32)
 
 
 def _plan_linear(
-    h: int, w: int, x: bool, y: bool, p: LinearParams
+    h: int, w: int, x: bool, y: bool, p: LinearParams, sx: int, sy: int
 ) -> list[np.ndarray | None]:
-    mx = np.tile(_ramp(w, p.width)[np.newaxis, :], (h, 1)) if x else None
-    my = np.tile(_ramp(h, p.width)[:, np.newaxis], (1, w)) if y else None
+    mx = np.tile(_ramp(w, p.width, sx)[np.newaxis, :], (h, 1)) if x else None
+    my = np.tile(_ramp(h, p.width, sy)[:, np.newaxis], (1, w)) if y else None
     return [mx, my]
 
 
@@ -385,54 +402,128 @@ def _cyclic_min_cut(cost: np.ndarray, lo: int, hi: int) -> np.ndarray:
     return _dp_path(band, int(first[-1])) + lo
 
 
-def _seam_mask_x(a: np.ndarray, b: np.ndarray, p: SeamParams) -> np.ndarray:
+def _cut_bands(w: int, s: int, search: float) -> tuple[int, int, int, int]:
+    """
+    Column ranges for the two cuts of an X pass with shift `s`: one between the border and
+    `s`, one between `s` and the other border (the copy's seam at `s` must stay inside).
+    """
+    c1, r1 = s / 2, max(1.0, search * s / 2)
+    c2, r2 = (s + w) / 2, max(1.0, search * (w - s) / 2)
+    lo1, hi1 = max(0, int(c1 - r1)), min(s, int(c1 + r1) + 1)
+    lo2, hi2 = max(s + 1, int(c2 - r2)), min(w, int(c2 + r2) + 1)
+    return lo1, max(hi1, lo1 + 1), lo2, max(hi2, lo2 + 1)
+
+
+def _seam_mask_x(
+    a: np.ndarray, b: np.ndarray, p: SeamParams, s: int | None = None
+) -> np.ndarray:
     """Mask (1 = take `a`) bounded left and right by minimum-error cuts between a and b."""
-    w = a.shape[1]
+    w = int(a.shape[1])
+    shift: int = w // 2 if s is None else s
     cost = np.square(a - b)
-    q = w // 4
-    half = max(1, int(p.search_width * q))
-    left = _cyclic_min_cut(cost, max(0, q - half), q + half)
-    right = _cyclic_min_cut(cost, 3 * q - half, min(w, 3 * q + half))
+    lo1, hi1, lo2, hi2 = _cut_bands(w, shift, p.search_width)
+    left = _cyclic_min_cut(cost, lo1, hi1)
+    right = _cyclic_min_cut(cost, lo2, hi2)
     xx = np.arange(w)[np.newaxis, :]
     m = ((xx >= left[:, np.newaxis]) & (xx < right[:, np.newaxis])).astype(np.float32)
     return _wrap_blur(m, p.feather)
 
 
-def _plan_min_error_seam(guide: np.ndarray, p: SeamParams) -> list[np.ndarray | None]:
+def _plan_min_error_seam(
+    guide: np.ndarray, p: SeamParams, sx: int, sy: int
+) -> list[np.ndarray | None]:
     g = _luminance(guide)
-    h, w = g.shape
-    shifted_x = _roll(g, 0, w // 2)
-    mx = _seam_mask_x(g, shifted_x, p)
+    shifted_x = _roll(g, 0, sx)
+    mx = _seam_mask_x(g, shifted_x, p, sx)
     # The second pass works on the result of the first pass, transposed.
     gx = g * mx + shifted_x * (1 - mx)
-    my = _seam_mask_x(gx.T, _roll(gx, h // 2, 0).T, p).T
+    my = _seam_mask_x(gx.T, _roll(gx, sy, 0).T, p, sy).T
     return [mx, np.ascontiguousarray(my)]
 
 
-def _wide_mask_x(m: np.ndarray, sigma: float) -> np.ndarray:
+def _wide_mask_x(m: np.ndarray, sigma: float, s: int) -> np.ndarray:
     """
     A blurred version of an X-pass mask for blending large-scale brightness. It is forced to 0
-    at the left/right border (the original's seam) and to 1 at the vertical centre line (the
-    shifted copy's seam), so the result still tiles.
+    at the left/right border (the original's seam) and to 1 at column `s` (the shifted copy's
+    seam), so the result still tiles.
     """
     w = m.shape[1]
     wide = np.clip(_wrap_blur(m, sigma), 0, 1)
     x = np.arange(w, dtype=np.float32) + 0.5
     dist_border = np.minimum(x, w - x) / w
-    dist_centre = np.abs(x - w / 2) / w
+    dist_seam = np.abs(x - s) / w
     allow = _smoothstep(0.0, 0.04, dist_border)[np.newaxis, :]
-    force = (1 - _smoothstep(0.0, 0.04, dist_centre))[np.newaxis, :]
+    force = (1 - _smoothstep(0.0, 0.04, dist_seam))[np.newaxis, :]
     return np.maximum(np.minimum(wide, allow), force).astype(np.float32)
 
 
 def _plan_low_masks(
-    masks: list[np.ndarray | None], sigma: float
+    masks: list[np.ndarray | None], sigma: float, sx: int, sy: int
 ) -> list[np.ndarray | None]:
     mx, my = masks
     return [
-        _wide_mask_x(mx, sigma) if mx is not None else None,
-        np.ascontiguousarray(_wide_mask_x(my.T, sigma).T) if my is not None else None,
+        _wide_mask_x(mx, sigma, sx) if mx is not None else None,
+        np.ascontiguousarray(_wide_mask_x(my.T, sigma, sy).T)
+        if my is not None
+        else None,
     ]
+
+
+# --------------------------------------------------------------------------- pattern align
+
+ANALYSIS_SIZE = 768
+MIN_ALIGN_GAIN = 0.2
+"""
+How much better (in correlation) the image must match itself at the aligned shift than at
+half the size. Regular patterns gained 0.27-1.4 in our tests, non-repeating textures <= 0.12.
+"""
+
+
+def _self_correlation(g: np.ndarray) -> np.ndarray:
+    """Normalized correlation of the image detail with itself, per horizontal shift."""
+    h, w = g.shape
+    detail = g - cv2.GaussianBlur(g, (0, 0), max(1.0, w / 64))
+    detail = detail - detail.mean()
+    window = np.hanning(h)[:, np.newaxis].astype(np.float32)
+    spectrum = np.fft.rfft(detail * window, axis=1)
+    ac = np.fft.irfft(np.abs(spectrum) ** 2, n=w, axis=1).sum(axis=0)
+    return ac / max(float(ac[0]), 1e-12)
+
+
+def _aligned_shift_x(g: np.ndarray) -> tuple[int, float, float]:
+    """
+    Finds a horizontal shift close to half the width at which the image best matches itself,
+    e.g. a whole number of bricks or tiles. With such a shift, the seams of every two-pass
+    method cut between matching structures, so regular patterns stay aligned.
+
+    Returns the shift in pixels of `g`, and the self-correlation at half the width and at the
+    chosen shift.
+    """
+    h, w = g.shape
+    scale = min(1.0, ANALYSIS_SIZE / max(h, w))
+    ga = g
+    if scale < 1:
+        ga = cv2.resize(
+            g, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA
+        )
+    wa = ga.shape[1]
+    corr = _self_correlation(ga)
+    lo, hi = int(wa * 0.35), int(wa * 0.65)
+    best = lo + int(np.argmax(corr[lo:hi]))
+    at_half = float(corr[wa // 2])
+    if corr[best] - at_half < MIN_ALIGN_GAIN:
+        return w // 2, at_half, at_half
+
+    # refine at full resolution
+    s0 = round(best / scale)
+    radius = int(np.ceil(1 / scale)) + 1
+    detail = g - cv2.GaussianBlur(g, (0, 0), max(1.0, w / 64))
+    best_s, best_corr = s0, -np.inf
+    for s in range(max(1, s0 - radius), min(w - 1, s0 + radius) + 1):
+        c = float((detail * _roll(detail, 0, s)).mean())
+        if c > best_corr:
+            best_s, best_corr = s, c
+    return best_s, at_half, float(corr[best])
 
 
 def _plan_splats(seed: int, p: SplatParams) -> list[Splat]:
@@ -478,28 +569,60 @@ def create_plan(
     seam: SeamParams = SeamParams(),  # noqa: B008
     splat: SplatParams = SplatParams(),  # noqa: B008
     preserve_contrast: bool = False,
+    pattern_align: bool = False,
 ) -> SeamlessPlan:
     guide = _plan_guide(guide)
     h, w = guide.shape[:2]
     plan = SeamlessPlan(method, preserve_contrast=preserve_contrast)
 
+    sx, sy = w // 2, h // 2
+    two_pass = method in (
+        SeamlessMethod.EDGES_LINEAR,
+        SeamlessMethod.EDGES_LINEAR_X,
+        SeamlessMethod.EDGES_LINEAR_Y,
+        SeamlessMethod.MIN_ERROR_SEAM,
+    )
+    if pattern_align and two_pass:
+        g = _luminance(guide)
+        sx, half_x, best_x = _aligned_shift_x(g)
+        sy, half_y, best_y = _aligned_shift_x(np.ascontiguousarray(g.T))
+        for axis, s, n, c_half, c_best in (
+            ("X", sx, w, half_x, best_x),
+            ("Y", sy, h, half_y, best_y),
+        ):
+            if s == n // 2 and c_half >= MIN_ALIGN_GAIN:
+                plan.info.append(
+                    f"{axis}: the pattern already lines up at half the size "
+                    f"(self-match {c_half:.2f})."
+                )
+            elif s == n // 2:
+                plan.info.append(
+                    f"{axis}: no repeating pattern found, shift is half the size."
+                )
+            else:
+                plan.info.append(
+                    f"{axis}: aligned to the pattern, shift {s / n * 100:.1f}% of the "
+                    f"size (self-match {c_half:.2f} -> {c_best:.2f})."
+                )
+    plan.shift_x, plan.shift_y = sx / w, sy / h
+
     if method == SeamlessMethod.EDGES_LINEAR:
-        plan.masks = _plan_linear(h, w, True, True, linear)
+        plan.masks = _plan_linear(h, w, True, True, linear, sx, sy)
     elif method == SeamlessMethod.EDGES_LINEAR_X:
-        plan.masks = _plan_linear(h, w, True, False, linear)
+        plan.masks = _plan_linear(h, w, True, False, linear, sx, sy)
     elif method == SeamlessMethod.EDGES_LINEAR_Y:
-        plan.masks = _plan_linear(h, w, False, True, linear)
+        plan.masks = _plan_linear(h, w, False, True, linear, sx, sy)
     elif method == SeamlessMethod.EDGES_QUINCUNX:
         plan.masks = [
             _quincunx_mask(guide, seed, quincunx),
             *_tip_masks(h, w, seed, quincunx),
         ]
     elif method == SeamlessMethod.MIN_ERROR_SEAM:
-        plan.masks = _plan_min_error_seam(guide, seam)
+        plan.masks = _plan_min_error_seam(guide, seam, sx, sy)
         if seam.low_freq_blend > 0:
             plan.band_sigma = seam.low_freq_blend
             plan.low_masks = _plan_low_masks(
-                plan.masks, seam.low_freq_blend * min(h, w) * 2
+                plan.masks, seam.low_freq_blend * min(h, w) * 2, sx, sy
             )
     elif method == SeamlessMethod.SPLAT_RANDOM:
         plan.masks = [
@@ -555,7 +678,8 @@ def _apply_two_pass(plan: SeamlessPlan, img: np.ndarray, map_type: MapType):
     two_band = plan.band_sigma > 0 and map_type != MapType.MASK
     sigma = plan.band_sigma * min(h, w)
 
-    for mask, low, shift in ((mx, low_x, (0, w // 2)), (my, low_y, (h // 2, 0))):
+    sx, sy = _shift_px(plan.shift_x, w), _shift_px(plan.shift_y, h)
+    for mask, low, shift in ((mx, low_x, (0, sx)), (my, low_y, (sy, 0))):
         if mask is None:
             continue
         shifted = _roll(img, *shift)
@@ -649,6 +773,31 @@ def apply_plan(plan: SeamlessPlan, img: np.ndarray, map_type: MapType) -> np.nda
 
 
 # --------------------------------------------------------------------------- pre-pass
+
+
+def height_from_normals(img: np.ndarray, map_type: MapType) -> np.ndarray:
+    """
+    A height-like guide reconstructed from a normal map (FFT Poisson integration, as in
+    chaiNNer's Normal Map to Height node). The colors of a normal map encode slope directions,
+    so they make a poor guide; the integrated height shows the actual shapes. Large-scale
+    drift from the integration is removed, since only the structure matters for a guide.
+    """
+    x, y, _ = _decode_normals(_as3(img).astype(np.float32))
+    if map_type == MapType.NORMAL_DX:
+        y = -y
+    dx = -x  # dh/dx
+    dy = y  # dh/drow (rows grow downwards, OpenGL green points up)
+    rows, cols = dx.shape
+    u, v = np.meshgrid(np.fft.fftfreq(cols), np.fft.fftfreq(rows))
+    denom = u * u + v * v
+    denom[0, 0] = 1
+    spectrum = -1j * (u * np.fft.fft2(dx) + v * np.fft.fft2(dy)) / denom
+    spectrum[0, 0] = 0
+    height = np.real(np.fft.ifft2(spectrum)).astype(np.float32)
+    height -= cv2.GaussianBlur(height, (0, 0), max(rows, cols) / 16)
+    lo = float(np.percentile(height, 1))
+    hi = float(np.percentile(height, 99))
+    return np.clip((height - lo) / max(hi - lo, 1e-6), 0, 1).astype(np.float32)
 
 
 def crop_margin_fraction(img: np.ndarray, percent: float) -> np.ndarray:

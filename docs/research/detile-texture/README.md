@@ -281,45 +281,63 @@ Robustness:
 
 ---
 
-## 7. Automatic method choice (prototype)
+## 7. Automatic choice and Pattern Align (implemented)
 
-Prototype: [`prototype/classify.py`](prototype/classify.py). Tested on 5 synthetic texture
-types × 3 seeds (stones, sand/plaster, clouds, wood fibres, bricks).
+### Real textures (12 CC0 textures from Poly Haven, off-centre crops so they don't tile)
+Min-Error Seam (with the two-band fix) was the best general method on real data too:
+- Quincunx and Linear show the same feature twice per tile (a bark knot) and ghosted planks.
+- Quincunx distorts the gingham checks; Splat breaks structured content.
 
-### Features (all from the guide, so every map of a stack gets the same decision)
-| Feature | Measures | Separation in the test |
-|---|---|---|
-| Periodicity | prominence of the strongest autocorrelation peak (a real repeat dips and rises again; smooth content only decays). Measured on vertical and horizontal edges separately, which also gives the **repeat size** | bricks 0.87, everything else ≤ 0.27 |
-| One direction | resultant of doubled gradient angles | wood 0.6, everything else ≤ 0.33 |
-| Right angles | resultant of quadrupled gradient angles | bricks 0.71, everything else ≤ 0.33 |
-| Smoothness | share of variance in large-scale brightness | sand/clouds ≥ 0.87, others ≤ 0.53 |
+![methods on real textures](images/methods_polyhaven.jpg)
 
-Repeat size: 76 px brick width found every time. For height it found 64 (2 staggered rows) or
-32 (1 row); both work, because the fit uses an even number of repeats.
+So "Auto" has one real decision to make: **is it a repeating pattern, and in which axis?**
 
-### What the decision changes
-After the two-band fix (§3.3), Min-Error Seam was best or tied for **every non-repeating
-class** (stones, sand, clouds, wood). So for organic textures, "Auto" and "Min-Error Seam"
-give the same result. The decision that matters is **repeating pattern or not**:
+### From "pattern fit" to "Pattern Align"
+- The first idea was to crop/resample the image to a whole number of repeats. That isn't
+  needed: the methods only require the **shift** between the image and its copy to be a whole
+  number of repeats. The output at the wrap always comes from the copy, which is continuous
+  there; at the cuts both sides are then in phase. So there's no rescaling and no content loss,
+  and it works per axis.
+- Shift search: normalized self-correlation of the image detail for shifts of 35–65% of the
+  size. The shift is aligned only if it matches at least 0.2 better than half the size.
+- **Rejected criterion: Min-Error cut cost.** On a panel grid, a half-size cut runs through
+  flat panel interiors where both copies agree. The cut looked fine, but the result had
+  wrong-width panels.
 
-- Strictly regular patterns only tile if the image holds a whole number of repeats. No
-  blending can fix misaligned rows.
-- **Pattern fit:** resample the image so it holds an *even* whole number of repeats per axis.
-  That is a slight rescale (worst case half a repeat over the image; at 2K with 76 px bricks
-  about 0.4%). Then the half-size shift used by every method is itself a whole number of
-  repeats, and Min-Error Seam cuts along matching structure.
+| Correlation gain over half size | |
+|---|---|
+| Patterns: tiles, metal plate, corrugated iron (X only), fabric, brick rows, synthetic panels, a real diamond-plate photo (Y) | 0.27 – 1.40 |
+| Non-patterns: rocks, bark, mud, cobblestone, plaster, sand, real concrete photos, laminate | ≤ 0.12 |
 
-![pattern fit](images/pattern_fit.jpg)
+![pattern align](images/pattern_align_polyhaven.jpg)
 
-(Zoom on the junction where 4 tiles meet.) Plain Min-Error steps grooves on CG panels.
-"Fitted only" doubles a groove at the junction. Fitted + Min-Error is seamless, and the best of
-the four for hand-laid bricks too.
+(Left: Min-Error, half shift. Right: with Pattern Align.) Fabric: a hard seam through the
+checks disappears. Metal plate: smoother. Brick/tiles: about equal. Laminate is correctly
+left alone; an earlier, looser threshold aligned it on plank ends, so all ends lined up in one
+column.
 
-### Limits
-- Photos of brick walls with perspective or lens distortion have a repeat size that changes
-  across the image. A single fit can't fix that; it would need rectification first.
-- Fitting rescales content slightly, so it should be visible and controllable (Off / Auto / On).
-- Patterns that repeat in only one axis (planks) should be fitted per axis.
+### Normal maps without a guide
+They get a height guide reconstructed from their own normals (FFT Poisson integration, minus
+large-scale drift). Red-brick test: the normal map alone reached the same Pattern Align
+decision as the albedo with the real height map.
+
+## 8. Lighting removal on real photos
+
+Three phone photos (a tread plate with a strong reflective hotspot and two concrete floors).
+Metric: leftover large-scale brightness variation.
+
+| Photo | Original | Divide by blur (current) | + local contrast normalization |
+|---|---|---|---|
+| Tread plate | 0.42 | **0.05** | 0.08 |
+| Concrete A | 0.07 | **0.01** | 0.02 |
+| Concrete B | 0.12 | **0.02** | 0.03 |
+
+- The current method (divide by a heavy blur) is the best of these. Contrast normalization
+  amplified white specks into repeating blotches.
+- A **specular hotspot** can't be fixed by any brightness/contrast correction. Inside it, the
+  contrast is *inverted*: flat metal is bright and the raised diamonds are dark, the reverse of
+  elsewhere. This needs diffuse light when shooting (overcast, or cross-polarized flash), or
+  replacing the hotspot area with content from elsewhere.
 
 ---
 
