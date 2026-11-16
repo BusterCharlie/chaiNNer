@@ -38,6 +38,12 @@ class SeamlessMethod(Enum):
     SPLAT_RANDOM = "splat_random"
 
 
+class TileAxes(Enum):
+    BOTH = "both"
+    X = "x"
+    Y = "y"
+
+
 class MapType(Enum):
     COLOR = "color"
     NORMAL_GL = "normal_gl"
@@ -181,13 +187,23 @@ def _resize_mask(mask: np.ndarray, h: int, w: int) -> np.ndarray:
     return cv2.resize(mask, (w, h), interpolation=interpolation)
 
 
+FAST_BLUR_SIGMA = 8.0
+"""Above this sigma, blurs use chaiNNer's fast (downsampling) gaussian approximation."""
+
+
+def _gaussian(img: np.ndarray, sigma: float) -> np.ndarray:
+    if sigma > FAST_BLUR_SIGMA:
+        return fast_gaussian_blur(img, sigma).reshape(img.shape)
+    return cv2.GaussianBlur(img, (0, 0), sigma).reshape(img.shape)
+
+
 def _wrap_blur(mask: np.ndarray, sigma: float) -> np.ndarray:
     """Gaussian blur that treats the image as periodic."""
     if sigma <= 0:
         return mask
     p = max(1, math.ceil(sigma * 3))
     padded = np.pad(mask, p, mode="wrap")
-    return cv2.GaussianBlur(padded, (0, 0), sigma)[p:-p, p:-p]
+    return _gaussian(padded, sigma)[p:-p, p:-p]
 
 
 def _normal_xy(img: np.ndarray, map_type: MapType) -> tuple[np.ndarray, np.ndarray]:
@@ -434,15 +450,24 @@ def _seam_mask_x(
 
 
 def _plan_min_error_seam(
-    guide: np.ndarray, p: SeamParams, sx: int, sy: int
+    guide: np.ndarray,
+    p: SeamParams,
+    sx: int,
+    sy: int,
+    tile_x: bool = True,
+    tile_y: bool = True,
 ) -> list[np.ndarray | None]:
     g = _luminance(guide)
-    shifted_x = _roll(g, 0, sx)
-    mx = _seam_mask_x(g, shifted_x, p, sx)
-    # The second pass works on the result of the first pass, transposed.
-    gx = g * mx + shifted_x * (1 - mx)
-    my = _seam_mask_x(gx.T, _roll(gx, sy, 0).T, p, sy).T
-    return [mx, np.ascontiguousarray(my)]
+    mx = my = None
+    gx = g
+    if tile_x:
+        shifted_x = _roll(g, 0, sx)
+        mx = _seam_mask_x(g, shifted_x, p, sx)
+        # The second pass works on the result of the first pass, transposed.
+        gx = g * mx + shifted_x * (1 - mx)
+    if tile_y:
+        my = np.ascontiguousarray(_seam_mask_x(gx.T, _roll(gx, sy, 0).T, p, sy).T)
+    return [mx, my]
 
 
 def _wide_mask_x(m: np.ndarray, sigma: float, s: int) -> np.ndarray:
@@ -678,6 +703,7 @@ def create_plan(
     splat: SplatParams = SplatParams(),  # noqa: B008
     preserve_contrast: bool = False,
     pattern_align: bool = False,
+    axes: TileAxes = TileAxes.BOTH,
 ) -> SeamlessPlan:
     guide = _plan_guide(guide)
     h, w = guide.shape[:2]
@@ -690,17 +716,24 @@ def create_plan(
         SeamlessMethod.EDGES_LINEAR_Y,
         SeamlessMethod.MIN_ERROR_SEAM,
     )
+    tile_x = axes != TileAxes.Y and method != SeamlessMethod.EDGES_LINEAR_Y
+    tile_y = axes != TileAxes.X and method != SeamlessMethod.EDGES_LINEAR_X
+    if not two_pass:
+        tile_x = tile_y = True
     if pattern_align and two_pass:
         g = _luminance(guide)
         gt = np.ascontiguousarray(g.T)
         sx, half_x, best_x = _aligned_shift_x(g)
         sy, half_y, best_y = _aligned_shift_x(gt)
         fits = {}
-        for axis, s, n, c_half, c_best, gg in (
-            ("X", sx, w, half_x, best_x, g),
-            ("Y", sy, h, half_y, best_y, gt),
+        for axis, s, n, c_half, c_best, gg, tiled in (
+            ("X", sx, w, half_x, best_x, g, tile_x),
+            ("Y", sy, h, half_y, best_y, gt, tile_y),
         ):
-            if s == n // 2 and c_half >= MIN_ALIGN_GAIN:
+            if not tiled:
+                plan.info.append(f"{axis}: not tiled.")
+                fits[axis] = (1.0, n // 2)
+            elif s == n // 2 and c_half >= MIN_ALIGN_GAIN:
                 plan.info.append(
                     f"{axis}: the pattern already lines up at half the size "
                     f"(self-match {c_half:.2f})."
@@ -725,7 +758,7 @@ def create_plan(
     plan.shift_x, plan.shift_y = sx / w, sy / h
 
     if method == SeamlessMethod.EDGES_LINEAR:
-        plan.masks = _plan_linear(h, w, True, True, linear, sx, sy)
+        plan.masks = _plan_linear(h, w, tile_x, tile_y, linear, sx, sy)
     elif method == SeamlessMethod.EDGES_LINEAR_X:
         plan.masks = _plan_linear(h, w, True, False, linear, sx, sy)
     elif method == SeamlessMethod.EDGES_LINEAR_Y:
@@ -736,7 +769,7 @@ def create_plan(
             *_tip_masks(h, w, seed, quincunx),
         ]
     elif method == SeamlessMethod.MIN_ERROR_SEAM:
-        plan.masks = _plan_min_error_seam(guide, seam, sx, sy)
+        plan.masks = _plan_min_error_seam(guide, seam, sx, sy, tile_x, tile_y)
         if seam.low_freq_blend > 0:
             plan.band_sigma = seam.low_freq_blend
             plan.low_masks = _plan_low_masks(
@@ -762,7 +795,7 @@ def create_plan(
 def _wrap_blur_image(img: np.ndarray, sigma: float) -> np.ndarray:
     p = max(1, math.ceil(sigma * 3))
     padded = np.pad(img, ((p, p), (p, p), (0, 0)), mode="wrap")
-    return _as3(cv2.GaussianBlur(padded, (0, 0), sigma))[p:-p, p:-p]
+    return _as3(_gaussian(padded, sigma))[p:-p, p:-p]
 
 
 def _blend_two_band(

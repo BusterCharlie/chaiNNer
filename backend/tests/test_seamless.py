@@ -338,3 +338,23 @@ def test_height_from_normals_recovers_shapes(map_type: MapType):
     detail = height - cv2.GaussianBlur(height, (0, 0), 8)
     corr = np.corrcoef(detail.ravel(), recovered.ravel())[0, 1]
     assert corr > 0.6, corr
+
+
+def test_x_only_tiles_horizontally_and_keeps_rows():
+    from nodes.impl.seamless import TileAxes
+
+    img = smooth_random(128, 160, 3, seed=14)
+    plan = create_plan(
+        img, SeamlessMethod.MIN_ERROR_SEAM, 1, pattern_align=True, axes=TileAxes.X
+    )
+    assert plan.masks[1] is None
+    assert any("Y: not tiled" in line for line in plan.info)
+    out = apply_plan(plan, img, MapType.COLOR)
+    jump_x = np.abs(out[:, 0] - out[:, -1]).mean()
+    step_x = 0.5 * (
+        np.abs(out[:, 1] - out[:, 0]).mean() + np.abs(out[:, -1] - out[:, -2]).mean()
+    )
+    assert jump_x / step_x < 1.6
+    # nothing is shifted vertically: the top and bottom rows still come from the original's
+    # top and bottom rows (possibly from the shifted copy, but never from the middle)
+    assert np.abs(out[0] - out[-1]).mean() > 3 * step_x

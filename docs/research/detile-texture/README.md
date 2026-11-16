@@ -343,21 +343,33 @@ Metric: leftover large-scale brightness variation.
   elsewhere. This needs diffuse light when shooting (overcast, or cross-polarized flash), or
   replacing the hotspot area with content from elsewhere.
 
-## 9. Perspective correction (prototype)
+## 9. Perspective correction (implemented: *Correct Perspective* node)
 
-[`prototype/perspective.py`](prototype/perspective.py). Three modes:
-- **Guided:** 4 corner points → `getPerspectiveTransform`. Always reliable.
-- **Automatic, lines:** LSD segments, RANSAC vanishing points for the near-vertical and
-  near-horizontal families, then send the vanishing line to infinity and make both families
-  axis-aligned. X/Y scale is kept equal at the image centre. A tilted wall photo used 105 vertical
-  and 74 horizontal segments and came out with parallel verticals (0.3 s at 2.9K × 3.9K).
-- **Automatic, pattern:** search the two perspective parameters that maximize the self-match
-  peaks of the detail. On a Poly Haven metal plate tilted by known amounts it recovered the tilt
-  with residual ≤ 0.013 (regularity back to the untilted 0.55), in about 1.3 s. On a real tilted
-  tread-plate photo it raised regularity from 0.60 to 0.76, and Pattern Align then found the
-  vertical repeat (none before).
-- **To do:** rotation (deskew) in the pattern search, so lattices photographed slightly rotated
-  get exact horizontal repeats too.
+`backend/src/nodes/impl/perspective.py`, node in Material Textures → Tiling. Like Make Seamless,
+the correction is planned once from a guide and applied to every map at its own resolution.
+
+- **Four Corners (guided):** 4 points (as % of the image) that form a rectangle on the surface.
+- **Automatic (Lines):** LSD segments, RANSAC vanishing points of the near-vertical and
+  near-horizontal families; the line through both is sent to infinity, then both families are
+  made axis-aligned (equal X/Y scale at the image centre). If one family is missing, it is
+  left as is.
+  - Tilted wall photo (2879×3860): 110 vertical and 74 horizontal segments, 0.4 s.
+- **Automatic (Pattern):** searches the two perspective terms that maximize the self-match
+  peaks of the detail.
+  - Known tilts of a test grid are recovered (regularity ≥ 85% of the untilted grid).
+  - **Align Pattern to Axes:** maps the near-horizontal and near-vertical repeats exactly onto
+    the axes, removing rotation **and shear**. An angled shot leaves an affine shear that
+    perspective terms can't see.
+  - Real tread-plate photo: regularity 0.57 → 0.75, then 2.9° rotation and 2.8° shear
+    removed. Make Seamless then fitted 19 whole repeats in both axes; before, it found none.
+- **Normal maps:** vectors are rotated with the local rotation of the warp (verified against
+  normals derived from a warped height map). Masks use nearest-neighbour sampling.
+- **Impossible results** (horizon crossing the image, >4× enlargement) raise a clear error and
+  suggest Four Corners.
+
+Make Seamless also got **Axes: X and Y / X only / Y only** for Min-Error Seam (e.g. a wall that
+only repeats horizontally), and full-resolution processing got about 9× faster (fast gaussian
+approximation for wide blurs, max error 1e-4).
 
 ---
 

@@ -11,6 +11,7 @@ from nodes.impl.seamless import (
     SeamlessMethod,
     SeamParams,
     SplatParams,
+    TileAxes,
     apply_plan,
     create_plan,
     crop_margin_fraction,
@@ -135,6 +136,20 @@ TWO_PASS_METHODS = (*LINEAR_METHODS, SeamlessMethod.MIN_ERROR_SEAM)
             .with_id(9),
         ),
         if_enum_group(3, SeamlessMethod.MIN_ERROR_SEAM)(
+            EnumInput(
+                TileAxes,
+                label="Axes",
+                default=TileAxes.BOTH,
+                option_labels={
+                    TileAxes.BOTH: "X and Y",
+                    TileAxes.X: "X only",
+                    TileAxes.Y: "Y only",
+                },
+            )
+            .with_docs(
+                "Which directions the result should tile in. Use *X only* for textures that are only repeated horizontally, such as a wall trim or a fence."
+            )
+            .with_id(24),
             SliderInput(
                 "Search Width", min=10, max=100, default=80, precision=1, unit="%"
             )
@@ -216,6 +231,7 @@ def make_seamless_node(
     mask_warp: float,
     warp_detail: int,
     content_influence: float,
+    axes: TileAxes,
     search_width: float,
     seam_feather: float,
     smooth_blend: float,
@@ -281,6 +297,7 @@ def make_seamless_node(
         ),
         preserve_contrast=is_color and preserve_contrast,
         pattern_align=align_to_pattern and method in TWO_PASS_METHODS,
+        axes=axes if method == SeamlessMethod.MIN_ERROR_SEAM else TileAxes.BOTH,
     )
     info.extend(plan.info)
 
