@@ -171,8 +171,18 @@ def plan_corners(
     if crop:
         x0, y0, x1, y1 = 0.0, 0.0, float(out_w), float(out_h)
     else:
+        denominators = np.c_[img_corners, np.ones(4)] @ pixel[2]
+        if not (np.all(denominators > 0) or np.all(denominators < 0)):
+            raise ValueError(
+                "With these corners, the uncropped image would be infinitely large. "
+                "Enable Crop to Valid Area."
+            )
         x0, y0 = warped.min(axis=0)
         x1, y1 = warped.max(axis=0)
+    if (x1 - x0) * (y1 - y0) > 16 * width * height:
+        raise ValueError(
+            "These corners would enlarge the image more than 4x. Check the corner positions."
+        )
     shift = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], np.float64)
     pixel = shift @ pixel
     return PerspectivePlan(

@@ -194,3 +194,14 @@ def test_pattern_mode_aligns_lattice_to_axes(rotation: float, shear: float):
     assert off_axis(skewed) > 1.0
     out = apply_perspective(plan_pattern(skewed, deskew=True), skewed, MapType.COLOR)
     assert off_axis(out) < 0.5, off_axis(out)
+
+
+def test_corners_without_crop_refuse_huge_outputs():
+    # a strongly converging quad: its horizon lies inside the image, so the uncropped warp
+    # would be infinitely large
+    corners = [(0.49, 0.4), (0.51, 0.4), (0.9, 0.6), (0.1, 0.6)]
+    with pytest.raises(ValueError):
+        plan_corners(corners, 400, 400, crop=False)
+    # cropped to the rectangle it's fine
+    plan = plan_corners(corners, 400, 400, crop=True)
+    assert max(plan.out_size) < 400

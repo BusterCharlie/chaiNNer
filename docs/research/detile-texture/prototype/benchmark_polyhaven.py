@@ -18,6 +18,7 @@ import csv
 import importlib
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -39,19 +40,52 @@ from packages.chaiNNer_standard.material_textures.tiling.make_seamless import ( 
 
 DEFAULT_IDS = [
     # repeating patterns
-    "red_brick", "red_brick_03", "medieval_blocks_03", "concrete_brick_wall_001",
-    "interior_tiles", "worn_tile_floor", "stone_embedded_tiles", "metal_plate",
-    "corrugated_iron", "factory_wall", "roof_09", "fabric_pattern_07", "book_pattern",
-    "laminate_floor_02", "plywood", "wood_table_001",
+    "red_brick",
+    "red_brick_03",
+    "medieval_blocks_03",
+    "concrete_brick_wall_001",
+    "interior_tiles",
+    "worn_tile_floor",
+    "stone_embedded_tiles",
+    "metal_plate",
+    "corrugated_iron",
+    "factory_wall",
+    "roof_09",
+    "fabric_pattern_07",
+    "book_pattern",
+    "laminate_floor_02",
+    "plywood",
+    "wood_table_001",
     # semi-regular
-    "cobblestone_floor_04", "cobblestone_floor_08", "grassy_cobblestone",
+    "cobblestone_floor_04",
+    "cobblestone_floor_08",
+    "grassy_cobblestone",
     # organic / stochastic
-    "aerial_rocks_02", "aerial_grass_rock", "coast_sand_rocks_02", "rock_pitted_mossy",
-    "rocky_trail_02", "brown_mud_leaves_01", "sand_01", "gravelly_sand", "sandy_gravel_02",
-    "aerial_beach_01", "snow_01", "bark_brown_01", "bark_brown_02", "bark_willow",
-    "grey_plaster", "beige_wall_001", "cracked_concrete_wall", "concrete_floor_02",
-    "concrete_floor_worn_001", "asphalt_02", "aerial_asphalt_01", "rust_coarse_01",
-    "green_metal_rust", "brown_leather", "leather_red_02",
+    "aerial_rocks_02",
+    "aerial_grass_rock",
+    "coast_sand_rocks_02",
+    "rock_pitted_mossy",
+    "rocky_trail_02",
+    "brown_mud_leaves_01",
+    "sand_01",
+    "gravelly_sand",
+    "sandy_gravel_02",
+    "aerial_beach_01",
+    "snow_01",
+    "bark_brown_01",
+    "bark_brown_02",
+    "bark_willow",
+    "grey_plaster",
+    "beige_wall_001",
+    "cracked_concrete_wall",
+    "concrete_floor_02",
+    "concrete_floor_worn_001",
+    "asphalt_02",
+    "aerial_asphalt_01",
+    "rust_coarse_01",
+    "green_metal_rust",
+    "brown_leather",
+    "leather_red_02",
 ]
 MAPS = {
     "albedo": ("Diffuse", "col_1", "col_2", "col_01"),
@@ -73,13 +107,20 @@ KW = {
 USER_AGENT = "chaiNNer-seamless-benchmark/1.0"
 
 
+ALLOWED_PREFIXES = ("https://api.polyhaven.com/", "https://dl.polyhaven.org/")
+
+
 def download(url: str, path: str) -> None:
+    if not url.startswith(ALLOWED_PREFIXES):
+        raise ValueError(f"Refusing to download from an unexpected location: {url}")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=60) as response, open(path, "wb") as f:
         f.write(response.read())
 
 
 def fetch(asset: str, cache: str) -> dict[str, np.ndarray]:
+    if not re.fullmatch(r"[a-z0-9_]+", asset):
+        raise ValueError(f"Not a Poly Haven asset id: {asset!r}")
     folder = os.path.join(cache, asset)
     os.makedirs(folder, exist_ok=True)
     index_path = os.path.join(folder, "files.json")
@@ -117,7 +158,9 @@ def lit(albedo: np.ndarray, normal: np.ndarray | None, rough: np.ndarray | None)
     half /= np.linalg.norm(half)
     ndl = np.clip(n @ light, 0, 1)[:, :, np.newaxis]
     r = rough[:, :, :1] if rough is not None else np.full_like(ndl, 0.6)
-    spec = np.clip(n @ half, 0, 1)[:, :, np.newaxis] ** (4 + 60 * (1 - r)) * (1 - r) * 0.5
+    spec = (
+        np.clip(n @ half, 0, 1)[:, :, np.newaxis] ** (4 + 60 * (1 - r)) * (1 - r) * 0.5
+    )
     return np.clip(albedo * (0.2 + 0.8 * ndl) + spec, 0, 1)
 
 
@@ -150,7 +193,14 @@ def main():
         for name, img in maps.items():
             map_type = MapType.NORMAL_GL if name == "normal" else MapType.COLOR
             out, info_text = make_seamless_node(
-                img, guide, map_type, SeamlessMethod.MIN_ERROR_SEAM, Seed(1), True, 0, **KW
+                img,
+                guide,
+                map_type,
+                SeamlessMethod.MIN_ERROR_SEAM,
+                Seed(1),
+                True,
+                0,
+                **KW,
             )
             results[name] = out if out.ndim == 3 else out[:, :, np.newaxis]
             if name == "albedo":
@@ -159,7 +209,11 @@ def main():
         after = lit(results["albedo"], results.get("normal"), results.get("rough"))
         ratios = {k: seam_ratio(v) for k, v in results.items()}
         table.append({"asset": asset, **{f"seam_{k}": f"{v:.2f}" for k, v in ratios.items()}, "info": info})  # fmt: skip
-        print(f"{asset:26s} " + " ".join(f"{k}={v:.2f}" for k, v in ratios.items()) + f"  {info}")
+        print(
+            f"{asset:26s} "
+            + " ".join(f"{k}={v:.2f}" for k, v in ratios.items())
+            + f"  {info}"
+        )
         rows.append(np.hstack([label(tile2(before), f"{asset}: input (lit, 2x2)"), label(tile2(after), "Make Seamless (lit, 2x2)")]))  # fmt: skip
 
     with open(os.path.join(out_dir, "results.csv"), "w", newline="") as f:
