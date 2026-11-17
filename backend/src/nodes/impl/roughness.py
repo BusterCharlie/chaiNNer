@@ -9,6 +9,13 @@ There is no way to measure roughness from a single diffuse photo, so this is an 
     (positive weight) or smoother (negative weight).
  3. Color picks that give regions of a chosen color their own roughness (e.g. rust on paint),
     and a metal mask with its own roughness.
+
+An optional texture mask (or the albedo's alpha channel) limits the statistics (average,
+contrast, local averages) to the texture itself, e.g. to ignore the empty background of a UV
+atlas.
+
+The defaults come from 20 scanned materials, whose roughness had a median standard deviation of
+about 0.04.
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ class ColorPick:
 @dataclass(frozen=True)
 class RoughnessParams:
     average: float = 0.6
-    contrast: float = 0.1
+    contrast: float = 0.04
     """Spread (standard deviation) of the base map."""
     brighter_is_rougher: bool = False
     reference: BrightnessReference = BrightnessReference.GLOBAL
@@ -97,11 +104,50 @@ def color_mask(
     return (t * t * (3 - 2 * t)).astype(np.float32)
 
 
-def _fine_detail(lum: np.ndarray) -> np.ndarray:
+# below this total weight, a texture mask is treated as empty and ignored
+_MIN_MASK_PIXELS = 16
+
+
+def texture_weights(albedo: np.ndarray, mask: np.ndarray | None) -> np.ndarray | None:
+    """
+    Where the texture is (1) and isn't (0): the given mask, or else the albedo's alpha channel.
+    `None` means everywhere (no mask, opaque or no alpha, or an empty mask).
+    """
+    h, w, c = get_h_w_c(albedo)
+    if mask is not None:
+        weights = _resized(mask, h, w)
+    elif c == 4:
+        weights = np.clip(albedo[:, :, 3], 0, 1).astype(np.float32)
+    else:
+        return None
+    assert weights is not None
+    if float(weights.min()) >= 1 or float(weights.sum()) < _MIN_MASK_PIXELS:
+        return None
+    return weights
+
+
+def _mean_std(x: np.ndarray, weights: np.ndarray | None) -> tuple[float, float]:
+    if weights is None:
+        return float(x.mean()), float(x.std())
+    total = float(weights.sum())
+    mean = float((x * weights).sum()) / total
+    var = float((weights * (x - mean) ** 2).sum()) / total
+    return mean, var**0.5
+
+
+def _local_mean(x: np.ndarray, sigma: float, weights: np.ndarray | None) -> np.ndarray:
+    """Blur that only averages texture pixels (normalized convolution)."""
+    if weights is None:
+        return _blur(x, sigma)
+    return _blur(x * weights, sigma) / np.maximum(_blur(weights, sigma), 1e-6)
+
+
+def _fine_detail(lum: np.ndarray, weights: np.ndarray | None) -> np.ndarray:
     """Local strength of fine detail (local std of a high-pass), scaled to about 0..1."""
     high = lum - _blur(lum, 2.0)
     energy = np.sqrt(np.maximum(_blur(high * high, 6.0), 0))
-    scale = float(np.percentile(energy, 99))
+    inside = energy if weights is None else energy[weights > 0.5]
+    scale = float(np.percentile(inside, 99)) if inside.size else 0.0
     return np.clip(energy / scale, 0, 1) if scale > 1e-6 else np.zeros_like(energy)
 
 
@@ -111,24 +157,28 @@ def generate_roughness(
     curvature: np.ndarray | None = None,
     ao: np.ndarray | None = None,
     metal: np.ndarray | None = None,
+    mask: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     `curvature` follows the usual convention: 0.5 = flat, brighter = convex, darker = concave.
-    `ao`: 1 = open, 0 = fully occluded. `metal`: 1 = metal. All optional maps are resized to
-    the albedo's size. Returns a single-channel roughness map in [0, 1].
+    `ao`: 1 = open, 0 = fully occluded. `metal`: 1 = metal. `mask`: 1 = texture, 0 = background
+    to leave out of the statistics; without it, the albedo's alpha channel is used if it has one.
+    All optional maps are resized to the albedo's size. Returns a single-channel roughness map
+    in [0, 1]; the background still gets values, but they don't affect the texture's.
     """
     h, w, _ = get_h_w_c(albedo)
     lum = _gray(albedo)
+    weights = texture_weights(albedo, mask)
 
     # 1. base map from brightness, remapped to the chosen average and contrast
     if params.reference == BrightnessReference.LOCAL:
-        cue = lum - _blur(lum, params.local_radius * max(h, w))
+        cue = lum - _local_mean(lum, params.local_radius * max(h, w), weights)
     else:
         cue = lum
     if not params.brighter_is_rougher:
         cue = -cue
-    std = float(cue.std())
-    z = (cue - cue.mean()) / std if std > 1e-6 else np.zeros_like(cue)
+    mean, std = _mean_std(cue, weights)
+    z = (cue - mean) / std if std > 1e-6 else np.zeros_like(cue)
     rough = params.average + params.contrast * z
 
     # 2. layers
@@ -142,7 +192,7 @@ def generate_roughness(
     if occ is not None and params.occlusion:
         rough = rough + params.occlusion * (1 - occ)
     if params.fine_detail:
-        rough = rough + params.fine_detail * _fine_detail(lum)
+        rough = rough + params.fine_detail * _fine_detail(lum, weights)
 
     # 3. regions with their own roughness
     for pick in params.picks:

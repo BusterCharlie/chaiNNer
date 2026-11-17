@@ -93,11 +93,20 @@ def to_pick(color: Color, roughness: int, tolerance: float, softness: float):
         ImageInput("Metal Mask", channels=1)
         .make_optional()
         .with_docs("White = metal. Metal areas get the *Metal Roughness*."),
+        ImageInput("Texture Mask", channels=1)
+        .make_optional()
+        .with_docs(
+            "White = texture, black = background to ignore, e.g. the empty space between the islands of a UV atlas. The *Average Roughness* and *Contrast* are then measured on the texture only.",
+            "Without a mask, the albedo's alpha channel is used if it has one.",
+        )
+        .with_id(25),
         SliderInput(
             "Average Roughness", min=0, max=100, default=60, precision=0, unit="%"
         ).with_id(4),
-        SliderInput("Contrast", min=0, max=50, default=10, precision=1, unit="%")
-        .with_docs("How much the roughness varies with the albedo's brightness.")
+        SliderInput("Contrast", min=0, max=50, default=4, precision=1, unit="%")
+        .with_docs(
+            "How much the roughness varies with the albedo's brightness (its standard deviation). Scanned materials are usually subtle: about 2-8%, typically 4%."
+        )
         .with_id(5),
         BoolInput("Brighter Is Rougher", default=False)
         .with_docs(
@@ -164,6 +173,7 @@ def generate_roughness_node(
     curvature: np.ndarray | None,
     ao: np.ndarray | None,
     metal: np.ndarray | None,
+    texture_mask: np.ndarray | None,
     average: int,
     contrast: float,
     brighter_is_rougher: bool,
@@ -205,5 +215,5 @@ def generate_roughness_node(
         metal_roughness=metal_roughness / 100,
         picks=tuple(picks),
     )
-    rough = generate_roughness(albedo, params, curvature, ao, metal)
+    rough = generate_roughness(albedo, params, curvature, ao, metal, texture_mask)
     return 1 - rough if output_smoothness else rough

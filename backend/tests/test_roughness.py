@@ -16,6 +16,7 @@ from nodes.impl.roughness import (
     RoughnessParams,
     color_mask,
     generate_roughness,
+    texture_weights,
 )
 
 
@@ -48,11 +49,13 @@ def test_local_reference_ignores_large_scale_shading():
     a = albedo()
     gradient = np.linspace(0.5, 1.0, 96, dtype=np.float32)[np.newaxis, :, np.newaxis]
     shaded = a * gradient
-    params = RoughnessParams(reference=BrightnessReference.LOCAL, local_radius=0.05)
+    params = RoughnessParams(
+        contrast=0.1, reference=BrightnessReference.LOCAL, local_radius=0.05
+    )
     r = generate_roughness(shaded, params)
     # the left/right halves get about the same average roughness despite the shading
     assert abs(r[:, :48].mean() - r[:, 48:].mean()) < 0.03
-    g = generate_roughness(shaded, RoughnessParams())
+    g = generate_roughness(shaded, RoughnessParams(contrast=0.1))
     assert abs(g[:, :48].mean() - g[:, 48:].mean()) > 0.05
 
 
@@ -98,3 +101,65 @@ def test_grayscale_albedo_and_range():
     a = lum(albedo())
     r = generate_roughness(a, RoughnessParams(average=0.95, contrast=0.5))
     assert r.min() >= 0 and r.max() <= 1
+
+
+def atlas(size: int = 96) -> tuple[np.ndarray, np.ndarray]:
+    """A texture island in the middle of a black background, and its mask."""
+    a = np.zeros((size, size, 3), np.float32)
+    mask = np.zeros((size, size), np.float32)
+    q = size // 4
+    a[q:-q, q:-q] = albedo(1, size - 2 * q)
+    mask[q:-q, q:-q] = 1
+    return a, mask
+
+
+def test_texture_mask_limits_statistics_to_the_texture():
+    a, mask = atlas()
+    inside = mask > 0.5
+    params = RoughnessParams(average=0.5, contrast=0.05)
+    r = generate_roughness(a, params, mask=mask)
+    assert abs(r[inside].mean() - 0.5) < 0.005
+    assert abs(r[inside].std() - 0.05) < 0.005
+    # without the mask, the black background skews both
+    unmasked = generate_roughness(a, params)
+    assert abs(unmasked[inside].mean() - 0.5) > 0.02
+    assert abs(unmasked[inside].std() - 0.05) > 0.01
+
+
+def test_alpha_channel_is_used_as_texture_mask():
+    a, mask = atlas()
+    rgba = np.dstack([a, mask])
+    params = RoughnessParams(average=0.5, contrast=0.05)
+    assert np.allclose(
+        generate_roughness(rgba, params), generate_roughness(a, params, mask=mask)
+    )
+    # an explicit mask wins over the alpha channel; an opaque alpha means no mask
+    assert texture_weights(rgba, np.ones((96, 96), np.float32)) is None
+    opaque = np.dstack([a, np.ones((96, 96), np.float32)])
+    assert texture_weights(opaque, None) is None
+
+
+def test_empty_mask_is_ignored():
+    a = albedo()
+    params = RoughnessParams(average=0.5, contrast=0.05)
+    empty = np.zeros((96, 96), np.float32)
+    assert np.allclose(
+        generate_roughness(a, params, mask=empty), generate_roughness(a, params)
+    )
+
+
+def test_local_reference_ignores_the_background():
+    a, mask = atlas()
+    inside = mask > 0.5
+    params = RoughnessParams(
+        average=0.5,
+        contrast=0.05,
+        reference=BrightnessReference.LOCAL,
+        local_radius=0.1,
+    )
+    r = generate_roughness(a, params, mask=mask)
+    border = inside & ~cv2.erode(mask, np.ones((9, 9), np.uint8)).astype(bool)
+    # the island's border isn't pulled towards the black background
+    assert abs(r[border].mean() - r[inside].mean()) < 0.02
+    unmasked = generate_roughness(a, params)
+    assert abs(unmasked[border].mean() - unmasked[inside].mean()) > 0.02
