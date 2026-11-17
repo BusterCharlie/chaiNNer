@@ -373,6 +373,23 @@ steps (90 cases per guess error):
 - **Cost:** about 17 s per photo in this unoptimised test. A coarse-to-fine search on a reduced
   copy would take a few seconds.
 
+**Real photos** (10 phone photos: low sun on a rubber mat, grass, asphalt, concrete and weeds,
+plus a shiny indoor floor and a panelled wall; not included):
+- **The search can't tell a direction from its 180° flip.** Both get identical scores.
+- **On grass and weeds the score barely changes with angle** (range 6–7%), so there's no usable
+  direction signal.
+- **On textures with a grain, it locks onto the pattern** (rubber mat, broom-finished concrete,
+  wall panels).
+- **The integrated height is dominated by large-scale errors.** Stains and colour patches become
+  bulges, a concrete joint becomes a step between slabs, and specular hotspots on the shiny floor
+  become hills.
+- **Plain brightness height** (after removing falloff) looked better on every photo: crisp
+  grain, the joint as a groove, and the mat's bars raised.
+- **Conclusion:** the synthetic test (Lambertian, no specular, no stains) overstated the
+  directional-light method. Don't build it as a general tool. If revisited, it would need
+  highlight removal and a strong high-pass first, and should only be used for fine detail.
+
+
 ---
 
 ## 4. Proposed nodes
