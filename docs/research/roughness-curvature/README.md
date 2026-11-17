@@ -104,8 +104,8 @@ purely an artistic choice, judged in the preview.
 
 ### A commercial photoscan set (UV atlas)
 
-Checked against a licensed photoscan material (a coiled basket, 2048² UV atlas with albedo,
-AO, cavity, a curvature-like detail map, gloss, roughness and an OpenGL normal map). The set
+Checked against a licensed photoscan material: a wicker basket, as a 2048² UV atlas with
+albedo, AO, bump, cavity, gloss, normal, roughness and specular maps. The set
 can't be redistributed, so only numbers are given here. Statistics cover the texture islands
 (70% of the atlas); the black background is excluded.
 
@@ -127,10 +127,17 @@ can't be redistributed, so only numbers are given here. Statistics cover the tex
 - **Linear-light vs sRGB brightness:** linear fits this scan better (r 0.997 vs 0.985). On the 12
   Poly Haven materials the result is mixed: linear is better on 3 and worse on 5, with median
   |r| 0.929 vs 0.944. Keep sRGB as the default.
-- **The detail map is curvature-like:** it correlates +0.51 with the Curvature Map node at
-  radius 2 when the normal map is read as OpenGL, and about 0 when it is read as DirectX. It also
-  confirms the normal map's convention. The second dark map is a rescaled cavity map
-  (`0.24 × cavity − 0.03`, RMSE 0.005).
+- **The specular map is derived from the cavity map, not from the albedo:**
+  `specular ≈ 0.24 × cavity − 0.03` (r 0.975, RMSE 0.005). So in this set, roughness comes from
+  colour and specular comes from geometry.
+- **The normal map is OpenGL:**
+  - The bump map's slopes agree with it (r +0.39 in x, +0.41 in y, Y up).
+  - Curvature from the normal correlates +0.51 with the bump map when the normal is read as
+    OpenGL, and about 0 when it is read as DirectX.
+- **The Curvature Map node gives consistent results from either source.** At radius 1, curvature
+  from the bump map and curvature from the normal map correlate +0.57. Both relate to the cavity
+  map: +0.35 from the bump and +0.42 from the normal. The normal map carries more fine detail
+  than the bump map, so it is the better source when both exist.
 
 ---
 
