@@ -390,6 +390,34 @@ plus a shiny indoor floor and a panelled wall; not included):
   highlight removal and a strong high-pass first, and should only be used for fine detail.
 
 
+### A machine-learning normal map model (PBRify NormalV3)
+
+PBRify_Remix's normal model (`1x-PBRify_NormalV3`, a 1× SPAN model reportedly under CC0) was
+trained on ambientCG and Poly Haven materials. It loads in chaiNNer's PyTorch *Load Model* node.
+It was tested on the 16 scans with a real displacement map (a different vendor from its training
+data) and on the 10 phone photos.
+
+- **It outputs DirectX normals (green = down).** Read as OpenGL, every score flips sign. Godot
+  and Blender need *Invert G*.
+- **Slope agreement with the real displacement:** the median is about the same as brightness.
+  - Fine detail: +0.13 vs +0.13. Medium: +0.07 vs +0.08. Coarse: −0.01 vs +0.04.
+  - It's close to brightness on most materials.
+  - It's somewhat better on brick-and-plaster (0.39 vs 0.31) and the dirty sidewalk tiles (+0.26
+    vs −0.13).
+  - It's weaker on the brick facade (0.35 vs 0.62).
+- **Its main strength is what it ignores.** On the phone photos it:
+  - kept the shiny floor flat, where brightness turned the ceiling-light hotspots and scratches
+    into strong bumps;
+  - suppressed most of the stain mottling on concrete;
+  - kept the concrete's broom grain and the rubber mat's bars.
+- **Like every method here, it can't recover the large-scale relief** of these scans (coarse
+  agreement about 0). That needs real height data or photometric capture.
+- **Recommended pipeline:**
+  1. PBRify for fine and medium normals (with *Invert G* for OpenGL).
+  2. Optionally blend with a brightness normal for materials whose recesses are dark (brick,
+     grout).
+  3. A height map from the normal (Normal Map to Height) if needed.
+
 ---
 
 ## 4. Proposed nodes
