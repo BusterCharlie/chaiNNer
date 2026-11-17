@@ -223,6 +223,70 @@ albedo, roughness, gloss, specular, AO, cavity, bump, displacement and normal ma
   sheets), occlusion (painted plaster) or colour (brick, rust). This supports keeping all three
   tools in the node: brightness, AO layer and colour picks.
 
+### Twenty scanned materials
+
+14 more licensed scans from the same vendor, analysed together with the 6 above (20 in total).
+All were captured with the vendor's scanners, colour-calibrated against a chart, over areas of
+0.4–2 m, and analysed at 1024². Two extra "imperfection" packs (scratch and smudge overlays with
+no albedo) were left out.
+
+R² of roughness explained by each source (1 = fully explained):
+- **Upper bound:** a quadratic fit on colour and geometry (AO, cavity, displacement, curvature).
+- **Node:** least-squares fits of the node's own controls (brightness, Edges/Cavities/Occlusion
+  layers, one colour pick).
+
+| Material | Mean | SD | Brightness rank-r | Colour | Geometry | Both | Node: brightness | + layers | + pick |
+|---|---|---|---|---|---|---|---|---|---|
+| Wood parquet | 0.72 | 0.013 | −0.56 | 0.35 | 0.72 | 0.83 | 0.33 | 0.67 | 0.67 |
+| Black marble tiles | 0.54 | 0.035 | +0.56 | 0.39 | 0.39 | 0.67 | 0.20 | 0.43 | 0.44 |
+| Brick facade | 0.73 | 0.004 | −0.87 | 0.81 | 0.62 | 0.84 | 0.80 | 0.84 | 0.84 |
+| Brick and plaster | 0.92 | 0.019 | +0.20 | 0.57 | 0.59 | 0.85 | 0.01 | 0.67 | 0.78 |
+| Bricks and mud | 0.82 | 0.032 | +0.19 | 0.05 | 0.14 | 0.22 | 0.03 | 0.08 | 0.09 |
+| Conglomerate | 0.82 | 0.018 | −0.79 | 0.85 | 0.09 | 0.86 | 0.69 | 0.73 | 0.77 |
+| Weathered metal sheet | 0.73 | 0.072 | +0.89 | 0.90 | 0.35 | 0.91 | 0.74 | 0.75 | 0.75 |
+| Rusty metal sheet A | 0.77 | 0.105 | −0.90 | 0.78 | 0.09 | 0.78 | 0.54 | 0.54 | 0.60 |
+| Dirty sidewalk tiles | 0.80 | 0.046 | +0.34 | 0.37 | 0.15 | 0.46 | 0.09 | 0.13 | 0.13 |
+| Painted metal panel | 0.90 | 0.062 | −0.48 | 0.78 | 0.19 | 0.79 | 0.62 | 0.63 | 0.74 |
+| Painted ceramic tiles | 0.51 | 0.085 | −0.19 | 0.96 | 0.23 | 0.96 | 0.05 | 0.27 | 0.44 |
+| Painted plaster | 0.35 | 0.019 | −0.27 | 0.37 | 0.89 | 0.98 | 0.09 | 0.92 | 0.92 |
+| Precast concrete | 0.64 | 0.074 | +0.66 | 0.91 | 0.71 | 0.92 | 0.79 | 0.81 | 0.82 |
+| Rusty metal sheet B | 0.81 | 0.102 | −0.77 | 0.59 | 0.02 | 0.61 | 0.40 | 0.41 | 0.42 |
+| Glossy worn tiles | 0.30 | 0.205 | −0.49 | 0.95 | 0.66 | 0.96 | 0.81 | 0.84 | 0.91 |
+| Tactile paving | 0.88 | 0.023 | +0.41 | 0.37 | 0.16 | 0.59 | 0.22 | 0.41 | 0.42 |
+| Stained red tiles | 0.74 | 0.044 | +0.09 | 0.51 | 0.33 | 0.60 | 0.01 | 0.34 | 0.45 |
+| Terracotta tiles | 0.77 | 0.036 | +0.24 | 0.39 | 0.38 | 0.60 | 0.05 | 0.17 | 0.17 |
+| Floor tiles | 0.86 | 0.021 | +0.85 | 0.82 | 0.17 | 0.83 | 0.74 | 0.76 | 0.78 |
+| Wooden decking | 0.65 | 0.090 | −0.94 | 0.94 | 0.30 | 0.94 | 0.87 | 0.89 | 0.90 |
+| **Median** | | **0.040** | | | | **0.83** | **0.37** | **0.65** | **0.70** |
+
+**Findings:**
+- **These roughness maps carry real information.** For 13 of 20 the best brightness curve
+  explains less than half, and for five (mud, dirty sidewalk, terracotta, tactile paving,
+  marble) colour and geometry together explain at most 0.67. No generator can recover what
+  isn't in the albedo or the geometry.
+- **Brightness direction:**
+  - Strongly brighter = rougher on 4 materials, strongly brighter = smoother on 6, weak on 10.
+  - The node's default (*Brighter Is Rougher* off) matches the majority. It has to stay a choice.
+- **Colour is a stronger cue than geometry** on 16 of 20. Geometry wins on the wood parquet,
+  painted plaster, glazed tiles with grout and the brick and plaster.
+- **The node's own controls reach a median of 0.70,** against 0.37 for brightness alone and 0.83
+  for the upper bound:
+  - **Layers** (mostly Occlusion) add the most: median +0.28.
+  - **One colour pick** adds up to +0.36 (the glossy tiles).
+  - **A second pick** adds up to +0.07 more (painted ceramic 0.47 → 0.54, stained red tiles 0.33 →
+    0.40, rusty sheet 0.63 → 0.68).
+- **Global brightness is as good as local or better on 17 of 20.**
+- **Contrast:** median SD 0.040 (quartiles 0.021–0.077, range 0.004–0.205). **Default: 4%.**
+- **The metal mask helps where metal is present.** On the precast concrete (7.6% metal), the metal
+  parts are smoother (0.43 vs 0.66). Every other set treats metal as non-metallic, with a flat
+  specular of about 0.19, and gloss within 0.02–0.06 of 1 − roughness.
+- **Tested and rejected: "colour axis" controls.**
+  - A free mix of R, G and B could beat brightness a lot on a few materials. The painted ceramic
+    goes 0.06 → 0.94, though the median change is small.
+  - Users can't tune three weights. A two-click version (one smooth spot, one rough spot) only
+    beat brightness by more than 0.05 on 4 of 20, and did worse than the two colour picks. Not
+    worth adding.
+
 ---
 
 ## 4. Proposed nodes
