@@ -139,6 +139,59 @@ can't be redistributed, so only numbers are given here. Statistics cover the tex
   map: +0.35 from the bump and +0.42 from the normal. The normal map carries more fine detail
   than the bump map, so it is the better source when both exist.
 
+### Three commercial scanned materials
+
+Three more licensed scans, each with albedo, roughness, AO, cavity, bump and displacement, and
+two with a normal map:
+- **green painted plaster** with flaking paint;
+- **brick under patchy plaster**;
+- **red conglomerate rock**.
+
+The scans can't be redistributed, so only numbers are given here. Unlike the basket, none of
+these roughness maps is just a brightness remap.
+
+How much of the roughness each kind of information can explain (R² of a quadratic fit, 60,000
+pixels per material):
+
+| Material | Any brightness curve | All colour features | Geometry (AO, cavity, height, curvature) | Colour + geometry |
+|---|---|---|---|---|
+| Painted plaster | 0.27 | 0.33 | 0.88 | 0.97 |
+| Brick and plaster | 0.15 | 0.54 | 0.58 | 0.83 |
+| Conglomerate | 0.69 | 0.82 | 0.09 | 0.83 |
+
+- **Painted plaster:**
+  - Roughness follows the AO map almost exactly (r −0.93): the occluded areas where the paint
+    has flaked off are rougher.
+  - Brightness barely matters (r −0.34).
+  - It's not possible to tell from the data whether the vendor derived roughness from AO, or the
+    recessed bare plaster really is rougher.
+- **Brick and plaster:**
+  - Brightness doesn't predict roughness at all (r +0.07).
+  - Colour does: the saturated red brick is smoother than the grey plaster (chroma r −0.57). So
+    does AO (r −0.74).
+- **Conglomerate:** brightness is the main cue (brighter is smoother, r −0.83). Geometry adds
+  almost nothing.
+- **Normal maps:** both normal maps follow the OpenGL convention. Curvature from the normal map
+  matches curvature from the displacement only when the normal is read as OpenGL.
+
+**What Generate Roughness can reach** (least-squares fit of its own controls):
+
+| Material | Brightness only | + Edges / Cavities | + Occlusion | + one colour pick |
+|---|---|---|---|---|
+| Painted plaster | R² 0.11 | 0.34 | **0.92** (RMSE 0.006) | – |
+| Brick and plaster | 0.01 | 0.19 | 0.64 | **0.77** (brick −0.02 smoother) |
+| Conglomerate | **0.68** (RMSE 0.011) | 0.69 | 0.71 | – |
+
+- **Global brightness beat local brightness on all three** (by 0.01–0.08 R²), so global stays
+  the default.
+- **The Occlusion layer is the strongest geometric cue.** Edges and Cavities add little once
+  Occlusion is used.
+- **Colour picks help when the material regions differ in hue rather than brightness.** The
+  brick pick (tolerance 12) covers 31% of the image.
+- **Scanned roughness has very low contrast.** The standard deviation is 0.02 for all three, 0.04
+  for the basket, and a median of 0.047 across the 12 Poly Haven materials (0.015–0.14). The
+  node's default Contrast of 10% is about twice the typical value; **4–5% is a better default.**
+
 ---
 
 ## 4. Proposed nodes
