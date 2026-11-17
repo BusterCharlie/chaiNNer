@@ -102,6 +102,36 @@ purely an artistic choice, judged in the preview.
 
 ![colour pick](images/colorpick.jpg)
 
+### A commercial photoscan set (UV atlas)
+
+Checked against a licensed photoscan material (a coiled basket, 2048² UV atlas with albedo,
+AO, cavity, a curvature-like detail map, gloss, roughness and an OpenGL normal map). The set
+can't be redistributed, so only numbers are given here. Statistics cover the texture islands
+(70% of the atlas); the black background is excluded.
+
+- **Roughness is computed from albedo brightness alone.** Rank correlation with albedo
+  brightness is −0.998. A straight line in linear-light luminance reproduces it almost exactly:
+  `roughness ≈ 0.938 − 0.514 × L_linear`, RMSE 0.003 (under one 8-bit level). The leftover error
+  doesn't correlate with AO (−0.02) or cavity (−0.12), so no geometry went into it.
+- **Gloss is exactly `1 − roughness`** (r = −1.00).
+- **The range is narrow:** mean 0.84, standard deviation 0.04 (p1–p99: 0.74–0.91). That matches
+  the Poly Haven finding that scanned roughness is a gentle, low-contrast remap of brightness.
+- **Generate Roughness reproduces it** (r = 0.985) with *Brighter Is Rougher* off, global
+  reference, and Average/Contrast set to 0.84/0.04. **But on an atlas the background matters:**
+  - Mean and spread computed over the whole atlas, background included: RMSE 0.034, biased
+    0.024 smoother.
+  - Over the texture only: RMSE 0.007.
+
+  So for atlases the node should compute its statistics only where there is texture (from the
+  alpha channel, or an optional mask input).
+- **Linear-light vs sRGB brightness:** linear fits this scan better (r 0.997 vs 0.985). On the 12
+  Poly Haven materials the result is mixed: linear is better on 3 and worse on 5, with median
+  |r| 0.929 vs 0.944. Keep sRGB as the default.
+- **The detail map is curvature-like:** it correlates +0.51 with the Curvature Map node at
+  radius 2 when the normal map is read as OpenGL, and about 0 when it is read as DirectX. It also
+  confirms the normal map's convention. The second dark map is a rescaled cavity map
+  (`0.24 × cavity − 0.03`, RMSE 0.005).
+
 ---
 
 ## 4. Proposed nodes
