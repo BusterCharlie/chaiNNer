@@ -117,6 +117,15 @@ const assignInput = (
             inputData[inputId] = text;
             break;
         }
+        case 'quad': {
+            if (typeof value !== 'string' || value.split(',').length !== 8)
+                throw new Error(
+                    `${errorStart}, which expects 8 comma-separated numbers (x,y of 4 corners).`
+                );
+
+            inputData[inputId] = value;
+            break;
+        }
         default:
             throw new Error(`${errorStart}, which does not support overrides.`);
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from nodes.groups import if_enum_group
@@ -11,17 +12,21 @@ from nodes.impl.perspective import (
     plan_pattern,
 )
 from nodes.impl.seamless import MapType, height_from_normals
-from nodes.properties.inputs import BoolInput, EnumInput, ImageInput, SliderInput
-from nodes.properties.outputs import ImageOutput, TextOutput
+from nodes.properties.inputs import (
+    BoolInput,
+    EnumInput,
+    ImageInput,
+    Quad,
+    QuadInput,
+    SliderInput,
+)
+from nodes.properties.outputs import ImageOutput, InputPreviewOutput, TextOutput
 from nodes.utils.utils import get_h_w_c
 
 from .. import tiling_group
 
-
-def corner_input(label: str, default: float, input_id: int):
-    return SliderInput(
-        label, min=0, max=100, default=default, precision=2, unit="%"
-    ).with_id(input_id)
+# the input preview sent to the corner editor never needs more detail than this
+PREVIEW_SIZE = 1024
 
 
 @tiling_group.register(
@@ -32,7 +37,7 @@ def corner_input(label: str, default: float, input_id: int):
         "### Modes",
         "- **Automatic (Lines)**: straightens converging lines, so they become vertical and horizontal. For walls, bricks, tiles, panels, planks, ...",
         "- **Automatic (Pattern)**: makes a repeating pattern as regular as possible, for surfaces without long straight lines, such as tread plate, mesh, or fabric. It can also remove a slight rotation or shear of the pattern.",
-        "- **Four Corners**: maps four points that form a rectangle on the surface (e.g. the corners of a tile or a panel) to a rectangle. Positions are percentages of the image size.",
+        "- **Four Corners**: drag the four corner points onto a rectangle on the surface (e.g. the corners of a tile or a panel), and it becomes a rectangle. The image appears in the node as soon as it is available: immediately when it comes straight from *Load Image*, otherwise after running the chain once.",
         "### Processing a whole material",
         "Connect **the same Guide** to one *Correct Perspective* node per map, with the same settings, and every map gets exactly the same correction, even at different resolutions.",
     ],
@@ -76,14 +81,11 @@ def corner_input(label: str, default: float, input_id: int):
             .with_id(5),
         ),
         if_enum_group(3, PerspectiveMode.CORNERS)(
-            corner_input("Top Left X", 0, 6),
-            corner_input("Top Left Y", 0, 7),
-            corner_input("Top Right X", 100, 8),
-            corner_input("Top Right Y", 0, 9),
-            corner_input("Bottom Right X", 100, 10),
-            corner_input("Bottom Right Y", 100, 11),
-            corner_input("Bottom Left X", 0, 12),
-            corner_input("Bottom Left Y", 100, 13),
+            QuadInput("Corners", image_input=0, preview_output=2)
+            .with_docs(
+                "Drag the corners onto a rectangle on the surface. Click a corner and use the arrow keys for fine adjustment (hold Shift for bigger steps)."
+            )
+            .with_id(15),
         ),
         BoolInput("Crop to Valid Area", default=True)
         .with_docs(
@@ -102,6 +104,7 @@ def corner_input(label: str, default: float, input_id: int):
             """,
         ),
         TextOutput("Info"),
+        InputPreviewOutput(),
     ],
 )
 def correct_perspective_node(
@@ -111,22 +114,14 @@ def correct_perspective_node(
     mode: PerspectiveMode,
     max_tilt: int,
     align_to_axes: bool,
-    tl_x: float,
-    tl_y: float,
-    tr_x: float,
-    tr_y: float,
-    br_x: float,
-    br_y: float,
-    bl_x: float,
-    bl_y: float,
+    corners: Quad,
     crop: bool,
-) -> tuple[np.ndarray, str]:
+) -> tuple[np.ndarray, str, np.ndarray]:
     h, w, _ = get_h_w_c(img)
     info: list[str] = []
 
     if mode == PerspectiveMode.CORNERS:
-        corners = [(tl_x, tl_y), (tr_x, tr_y), (br_x, br_y), (bl_x, bl_y)]
-        plan = plan_corners([(x / 100, y / 100) for x, y in corners], w, h, crop=crop)
+        plan = plan_corners(list(corners), w, h, crop=crop)
     else:
         if guide is not None:
             gh, gw, _ = get_h_w_c(guide)
@@ -149,4 +144,14 @@ def correct_perspective_node(
                 crop=crop,
             )
     info.extend(plan.info)
-    return apply_perspective(plan, img, map_type), "\n".join(info)
+    return apply_perspective(plan, img, map_type), "\n".join(info), _preview(img)
+
+
+def _preview(img: np.ndarray) -> np.ndarray:
+    """A downscaled copy of the input for the corner editor."""
+    h, w, _ = get_h_w_c(img)
+    scale = PREVIEW_SIZE / max(h, w)
+    if scale >= 1:
+        return img
+    size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    return cv2.resize(img, size, interpolation=cv2.INTER_AREA)

@@ -205,3 +205,30 @@ def test_corners_without_crop_refuse_huge_outputs():
     # cropped to the rectangle it's fine
     plan = plan_corners(corners, 400, 400, crop=True)
     assert max(plan.out_size) < 400
+
+
+def test_parse_quad_accepts_valid_corners():
+    from nodes.properties.inputs import parse_quad
+
+    quad = parse_quad("0,0,1,0,1,1,0,1")
+    assert quad == ((0, 0), (1, 0), (1, 1), (0, 1))
+    # slightly out of range values are clamped, not rejected
+    assert parse_quad("-0.001,0,1,0,1,1.002,0,1")[0] == (0, 0)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0,0,1,0,1,1",  # 3 points
+        "0,0,1,0,1,1,0,abc",  # not a number
+        "1,0,0,0,0,1,1,1",  # wrong order (counter-clockwise)
+        "0,0,1,1,1,0,0,1",  # crossing (bow tie)
+        "0,0,0.5,0.6,1,1,0,1",  # concave (dent at the top right)
+        "0,0,0.005,0,1,1,0,1",  # two corners on top of each other
+    ],
+)
+def test_parse_quad_rejects_invalid_corners(value: str):
+    from nodes.properties.inputs import parse_quad
+
+    with pytest.raises(ValueError):
+        parse_quad(value)

@@ -78,6 +78,16 @@
         },
         "rgbHex": {
             "hex": "Hex"
+        },
+        "quad": {
+            "noImage": "Connect an image, or run the chain once, to see it here.",
+            "hint": "Drag the corners. Click one, then use the arrow keys to nudge it.",
+            "corner": {
+                "0": "top left",
+                "1": "top right",
+                "2": "bottom right",
+                "3": "bottom left"
+            }
         }
     },
     "outputs": {

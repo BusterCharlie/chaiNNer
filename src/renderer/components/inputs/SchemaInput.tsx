@@ -16,6 +16,7 @@ import { GenericInput } from './GenericInput';
 import { InputContainer, InputHandle } from './InputContainer';
 import { NumberInput } from './NumberInput';
 import { InputProps } from './props';
+import { QuadInput } from './QuadInput';
 import { SliderInput } from './SliderInput';
 import { StaticValueInput } from './StaticValueInput';
 import { TextInput } from './TextInput';
@@ -33,6 +34,7 @@ const InputComponents: {
     number: NumberInput,
     slider: SliderInput,
     color: ColorInput,
+    quad: QuadInput,
     generic: GenericInput,
     static: StaticValueInput,
 };

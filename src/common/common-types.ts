@@ -143,6 +143,18 @@ export interface ColorInput extends InputBase {
     readonly channels?: readonly number[] | null;
 }
 
+export interface QuadInput extends InputBase {
+    readonly kind: 'quad';
+    /** "x1,y1,x2,y2,x3,y3,x4,y4" as fractions of the image size (TL, TR, BR, BL). */
+    readonly def: string;
+    /** The image input whose image is shown under the corners. */
+    readonly imageInput: InputId;
+    /** An output of the same node that broadcasts a preview of the image, if any. */
+    readonly previewOutput?: OutputId | null;
+    /** The minimum distance between two corners, as a fraction of the image size. */
+    readonly minDistance: number;
+}
+
 export interface StaticValueInput extends InputBase {
     readonly kind: 'static';
     readonly value: 'execution_number';
@@ -158,9 +170,10 @@ export type Input =
     | SliderInput
     | NumberInput
     | ColorInput
+    | QuadInput
     | StaticValueInput;
 
-export type OutputKind = 'large-image' | 'tagged' | 'generic';
+export type OutputKind = 'large-image' | 'tagged' | 'generic' | 'preview';
 
 export interface Output {
     readonly id: OutputId;

@@ -330,6 +330,7 @@ const getInputDataAdapters = (
                 case 'number':
                 case 'slider':
                 case 'text':
+                case 'quad':
                 case 'static': {
                     adapters.set(input.id, (value) => literal(value as never));
                     break;

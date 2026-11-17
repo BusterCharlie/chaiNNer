@@ -216,3 +216,24 @@ class LargeImageOutput(ImageOutput):
 def VideoOutput():
     """Output a 3D Video NumPy array"""
     return NumPyOutput("Video", "Video")
+
+
+class InputPreviewOutput(LargeImageOutput):
+    """
+    A hidden output that sends a preview of an image to the editor without showing a row or
+    handle of its own. Inputs such as `QuadInput` use it to draw over the node's input image.
+    """
+
+    def __init__(self, label: str = "Input Preview"):
+        super().__init__(
+            label,
+            image_type="""
+                Image {
+                    width: int(1..),
+                    height: int(1..),
+                    channels: Input0.channels,
+                }
+            """,
+            kind="preview",
+            has_handle=False,
+        )

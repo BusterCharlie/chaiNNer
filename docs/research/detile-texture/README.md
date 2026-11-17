@@ -348,7 +348,14 @@ Metric: leftover large-scale brightness variation.
 `backend/src/nodes/impl/perspective.py`, node in Material Textures → Tiling. Like Make Seamless,
 the correction is planned once from a guide and applied to every map at its own resolution.
 
-- **Four Corners (guided):** 4 points (as % of the image) that form a rectangle on the surface.
+- **Four Corners (guided):** an interactive editor inside the node: the input image with four
+  draggable corners (new `quad` input kind, `src/renderer/components/inputs/QuadInput.tsx`).
+  The image comes from the upstream node's preview (e.g. Load Image, available immediately) or
+  from a hidden `preview` output that the node fills when it runs. Corners can't come closer
+  than 5% of the image or make the shape cross or fold (same rules in the editor and the
+  backend); click a corner and use the arrow keys (Shift = 10 px) for fine adjustment.
+  Verified in the real app (headless Electron + Playwright): drags land within 0.01%, also
+  zoomed out; collisions and crossings are refused; the node keeps its width.
 - **Automatic (Lines):** LSD segments, RANSAC vanishing points of the near-vertical and
   near-horizontal families; the line through both is sent to infinity, then both families are
   made axis-aligned (equal X/Y scale at the image centre). If one family is missing, it is

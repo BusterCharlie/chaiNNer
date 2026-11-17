@@ -20,6 +20,7 @@ InputKind = Literal[
     "color",
     "generic",
     "static",
+    "quad",
 ]
 
 

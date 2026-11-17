@@ -690,3 +690,87 @@ def AnchorInput(label: str = "Anchor", icon: str = "BsFillImageFill") -> DropDow
         preferred_style="anchor",
         default=Anchor.CENTER,
     )
+
+
+Quad = tuple[
+    tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]
+]
+"""Four points (top-left, top-right, bottom-right, bottom-left) as fractions of the size."""
+
+
+def parse_quad(value: str, min_distance: float = 0.01) -> Quad:
+    """
+    Parses and validates the value of a `QuadInput`: 8 comma-separated numbers in [0, 1].
+    The points must form a convex quadrilateral in the order top-left, top-right,
+    bottom-right, bottom-left, and must not be closer than `min_distance` to each other.
+    """
+    try:
+        numbers = [float(v) for v in value.split(",")]
+    except ValueError:
+        raise ValueError(f"Invalid corner positions: {value!r}") from None
+    if len(numbers) != 8:
+        raise ValueError(f"Expected 4 corner positions, but got {value!r}")
+    points = [
+        (min(max(numbers[i], 0.0), 1.0), min(max(numbers[i + 1], 0.0), 1.0))
+        for i in range(0, 8, 2)
+    ]
+    for i in range(4):
+        for j in range(i + 1, 4):
+            dx = points[i][0] - points[j][0]
+            dy = points[i][1] - points[j][1]
+            if (dx * dx + dy * dy) ** 0.5 < min_distance:
+                raise ValueError("Two corners are on top of each other.")
+    # convex and in clockwise order (as displayed, y pointing down)
+    for i in range(4):
+        ax, ay = points[i]
+        bx, by = points[(i + 1) % 4]
+        cx, cy = points[(i + 2) % 4]
+        cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        if cross <= 0:
+            raise ValueError(
+                "The corners must form a convex shape, in the order top-left, top-right, "
+                "bottom-right, bottom-left."
+            )
+    return points[0], points[1], points[2], points[3]
+
+
+class QuadInput(BaseInput[Quad]):
+    """
+    Four draggable corner points over a preview of an image. The value is stored as
+    "x1,y1,x2,y2,x3,y3,x4,y4" (fractions of the image size), in the order top-left,
+    top-right, bottom-right, bottom-left.
+    """
+
+    def __init__(
+        self,
+        label: str = "Corners",
+        *,
+        image_input: int = 0,
+        preview_output: int | None = None,
+        default: str = "0,0,1,0,1,1,0,1",
+        min_distance: float = 0.05,
+    ):
+        super().__init__(
+            input_type="string",
+            label=label,
+            has_handle=False,
+            kind="quad",
+        )
+        parse_quad(default)
+        self.default = default
+        self.image_input = image_input
+        self.preview_output = preview_output
+        self.min_distance = min_distance
+        self.associated_type = Quad
+
+    def enforce(self, value: object) -> Quad:
+        return parse_quad(str(value))
+
+    def to_dict(self):
+        return {
+            **super().to_dict(),
+            "def": self.default,
+            "imageInput": self.image_input,
+            "previewOutput": self.preview_output,
+            "minDistance": self.min_distance,
+        }
