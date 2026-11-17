@@ -1,10 +1,9 @@
 import { Box, Center, HStack, Image, Text } from '@chakra-ui/react';
 import { Resizable } from 're-resizable';
-import { KeyboardEvent, PointerEvent, memo, useCallback, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, PointerEvent, memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useReactFlow } from 'reactflow';
 import { useContextSelector } from 'use-context-selector';
-import { OutputId, Size } from '../../../common/common-types';
+import { Size } from '../../../common/common-types';
 import {
     Point,
     Quad,
@@ -13,9 +12,9 @@ import {
     parseQuad,
     stringifyQuad,
 } from '../../../common/quad';
-import { parseSourceHandle, stringifyTargetHandle } from '../../../common/util';
 import { GlobalVolatileContext } from '../../contexts/GlobalNodeState';
 import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio';
+import { pickImage, useInputImagePreview } from '../../hooks/useInputImagePreview';
 import { DragHandleSVG } from '../CustomIcons';
 import { WithLabel } from './InputContainer';
 import { InputProps } from './props';
@@ -24,60 +23,6 @@ const CORNER_NAMES = ['top left', 'top right', 'bottom right', 'bottom left'] as
 const DEFAULT_SIZE: Readonly<Size> = { width: 240, height: 240 };
 const MIN_SIZE = 160;
 const HANDLE_SIZE = 14;
-
-interface PreviewImage {
-    readonly width: number;
-    readonly height: number;
-    readonly url: string;
-}
-interface PreviewData {
-    readonly previews: readonly PreviewImage[];
-    readonly width: number;
-    readonly height: number;
-}
-const isPreviewData = (data: unknown): data is PreviewData =>
-    typeof data === 'object' &&
-    data !== null &&
-    Array.isArray((data as Partial<PreviewData>).previews) &&
-    (data as PreviewData).previews.length > 0;
-
-const pickImage = (previews: readonly PreviewImage[], realWidth: number): PreviewImage => {
-    const sorted = [...previews].sort((a, b) => a.width - b.width);
-    return sorted.find((p) => p.width >= realWidth) ?? sorted[sorted.length - 1];
-};
-
-/**
- * The image shown under the corners: the preview of whatever is connected to the image input
- * (e.g. Load Image, available right away), or else the node's own input preview from its last run.
- */
-const useImagePreview = (
-    nodeId: string | undefined,
-    imageInput: number,
-    previewOutput: OutputId | null | undefined
-): PreviewData | undefined => {
-    const { getEdges } = useReactFlow();
-    const edgeChanges = useContextSelector(GlobalVolatileContext, (c) => c.edgeChanges);
-    const sourceHandle = useMemo(() => {
-        if (!nodeId) return undefined;
-        const targetHandle = stringifyTargetHandle({ nodeId, inputId: imageInput as never });
-        return getEdges().find((e) => e.targetHandle === targetHandle)?.sourceHandle ?? undefined;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [nodeId, imageInput, getEdges, edgeChanges]);
-
-    const upstream = useContextSelector(GlobalVolatileContext, (c) => {
-        if (!sourceHandle) return undefined;
-        const { nodeId: sourceId, outputId } = parseSourceHandle(sourceHandle);
-        return c.outputDataMap.get(sourceId)?.data?.[outputId];
-    });
-    const own = useContextSelector(GlobalVolatileContext, (c) => {
-        if (!nodeId || previewOutput == null) return undefined;
-        return c.outputDataMap.get(nodeId)?.data?.[previewOutput];
-    });
-
-    if (isPreviewData(upstream)) return upstream;
-    if (sourceHandle && isPreviewData(own)) return own;
-    return undefined;
-};
 
 export const QuadInput = memo(
     ({ value, setValue, input, isLocked, nodeId, size, setSize }: InputProps<'quad', string>) => {
@@ -96,7 +41,7 @@ export const QuadInput = memo(
         const draggingRef = useRef<number>();
         const areaRef = useRef<HTMLDivElement>(null);
 
-        const preview = useImagePreview(nodeId, imageInput, previewOutput);
+        const preview = useInputImagePreview(nodeId, imageInput, previewOutput);
         const aspect = preview ? preview.width / preview.height : 1;
 
         // size (resizable like image previews). The default is only rendered, never stored:

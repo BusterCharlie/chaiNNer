@@ -22,7 +22,7 @@ const OutputComponents: Readonly<
     'large-image': LargeImageOutput,
     tagged: TaggedOutput,
     generic: GenericOutput,
-    // previews are only used by other components (e.g. the corner editor) and are never shown
+    // previews are only used by other components (e.g. image editors in inputs), never shown
     preview: GenericOutput,
 };
 const OutputIsGeneric: Readonly<Record<OutputKind, boolean>> = {

@@ -221,7 +221,8 @@ def VideoOutput():
 class InputPreviewOutput(LargeImageOutput):
     """
     A hidden output that sends a preview of an image to the editor without showing a row or
-    handle of its own. Inputs such as `QuadInput` use it to draw over the node's input image.
+    handle of its own. Inputs that draw over the node's input image (e.g. point or corner
+    editors) use it when the image doesn't come straight from a node with a preview.
     """
 
     def __init__(self, label: str = "Input Preview"):
