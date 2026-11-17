@@ -287,6 +287,58 @@ R² of roughness explained by each source (1 = fully explained):
     beat brightness by more than 0.05 on 4 of 20, and did worse than the two colour picks. Not
     worth adding.
 
+### Albedo as height for normal maps
+
+The same scans, 15–16 of which have a real displacement map, were used to test ways of turning
+an image into height for *Normal Map Generator*.
+
+**Metric:** the slope agreement between the image-derived height and the real displacement,
+per detail size (+1 = same slopes, −1 = same but upside-down; 1024² for the first two tests,
+512² for the lit photos).
+
+**Delit albedo:**
+- **Brightness is a weak stand-in for height:** median |agreement| about 0.2 for fine detail
+  and about 0.1 for medium and large shapes.
+- **It works only where colour and shape coincide,** such as dark grout or mortar in recesses,
+  or gaps between planks: glazed tiles with grout 0.74–0.88, brick facade 0.62–0.77, wooden
+  decking about 0.6.
+- **The channel matters for red brick:** Red or Max RGB beats Average RGB (0.77 vs 0.62). Blue
+  inverts it.
+- **The direction is material-dependent:** dark is raised on 5 of 16 materials.
+- **Large shapes are unreliable** on 11 of 16, and sometimes upside-down: they're mostly stains.
+  High-pass before generating normals.
+- **Edge-preserving smoothing helps wood** (decking fine detail 0.63 → 0.75).
+- **No universal grey conversion exists:** the best per-material RGB mix reaches only about
+  0.2–0.4, with different weights for every material.
+
+**Colour pick on the recess colour** (soft mask as height):
+- Better than brightness on brick and tile layouts: brick facade 0.73 → 0.80, brick and plaster
+  0.35 → 0.46.
+- Most other materials have no distinct recess colour.
+
+**Synthetic lit photos** (each albedo relit with a directional light from its own normal map,
+35° elevation, three directions, plus a ±30% brightness falloff):
+- **Height from directional shading** (B2M-style "light" mode: integrate the high-passed log
+  luminance along the light direction) with the **true light direction** gives a median of
+  +0.29 (medium detail), against +0.07 for brightness.
+  - Strong on materials with real relief: brick facade 0.81, painted plaster 0.78, brick and mud
+    0.76, corrugated metal 0.61–0.76, brick and plaster 0.63.
+  - Worse than brightness where colour, not relief, dominates: glossy tiles 0.19 vs 0.81,
+    decking 0.23 vs 0.51.
+- **Automatic light direction is unreliable.** The method assumes that the shading's spectrum
+  has a cos² lobe along the light, so it measures the image's spectral orientation.
+  - Median axis error was 29°, and only 22% were within 15°.
+  - It locks onto the texture's own orientation (corrugation, planks, brick rows), and works
+    only on isotropic relief (mud 2–8°, painted plaster 3–19°).
+  - The convex/concave sign can't be told apart: a "dark = low" prior was right 44% of the
+    time. With the auto direction, agreement drops to about 0.
+- **The light direction should be set by the user** (an angle, checked in Material Preview),
+  as B2M does.
+- **Brightness falloff is easy to remove automatically:** dividing by a heavy blur (flat field)
+  cut the falloff's correlation from 0.97 to 0.15.
+- Real photos add specular highlights, cast shadows and non-directional light, so expect lower
+  numbers than these synthetic ones.
+
 ---
 
 ## 4. Proposed nodes
