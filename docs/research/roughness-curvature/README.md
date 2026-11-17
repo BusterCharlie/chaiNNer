@@ -339,6 +339,40 @@ per detail size (+1 = same slopes, −1 = same but upside-down; 1024² for the f
 - Real photos add specular highlights, cast shadows and non-directional light, so expect lower
   numbers than these synthetic ones.
 
+**Refining a manual light direction automatically.**
+
+Starting from a deliberately wrong guess, three refinements searched within ±45° of it in 5°
+steps (90 cases per guess error):
+- **Least-energy shape:** pick the angle whose height has the least slope energy (a wrong
+  direction invents streaks).
+- **Re-render check:** rebuild the height at each angle, relight it with a Lambertian model
+  (clipped self-shadowing, a few height scales and light elevations), and pick the angle that
+  best reproduces the flat-fielded photo.
+- **Combined:** both scores, normalised and added.
+
+| Guess off by | Method | Median angle error | Within 10° | Improved / worse than the guess | Height agreement (true direction: 0.29) |
+|---|---|---|---|---|---|
+| 20° | (guess) | 20° | 0% | – | 0.21 |
+| 20° | least energy | 25° | 16% | 22% / 52% | 0.12 |
+| 20° | **re-render** | 17.5° | 47% | 50% / 36% | **0.28** |
+| 35° | (guess) | 35° | 0% | – | 0.11 |
+| 35° | least energy | 30° | 24% | 72% / 28% | 0.13 |
+| 35° | **re-render** | **10°** | **62%** | 74% / 26% | **0.23** |
+
+- **The re-render check works; the least-energy prior doesn't.**
+- **It's most useful for rough guesses.** Height quality is forgiving within about 20°, so a
+  close guess barely changes the result.
+- **It's reliable on relief without a grain:** from 35° off, bricks, plaster and mud land within
+  0–10° and recover the true-direction agreement.
+- **It fails on strongly directional textures** (corrugated metal, precast concrete). The search
+  slides toward the texture's own axis and stops at the edge of the window.
+- **So:** make refinement optional, limit the search to about ±30°, and show the refined angle
+  so the user can accept or reset it.
+- **Side results:** the search also estimates the light's height and the shape's depth, which
+  could suggest a normal-map strength.
+- **Cost:** about 17 s per photo in this unoptimised test. A coarse-to-fine search on a reduced
+  copy would take a few seconds.
+
 ---
 
 ## 4. Proposed nodes
