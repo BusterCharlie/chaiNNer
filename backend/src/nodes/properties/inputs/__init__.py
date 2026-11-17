@@ -3,6 +3,7 @@ from .generic_inputs import *
 from .image_dropdown_inputs import *
 from .numeric_inputs import *
 from .numpy_inputs import *
+from .point_input import *
 
 try:
     from .ncnn_inputs import *

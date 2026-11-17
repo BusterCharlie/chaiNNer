@@ -361,6 +361,7 @@ const getInputDataAdapters = (
                 }
 
                 case 'generic':
+                case 'point':
                 case 'file':
                 case 'directory':
                 case 'color':

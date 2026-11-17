@@ -12,6 +12,7 @@ from .types import InputId, OutputId
 
 InputKind = Literal[
     "number",
+    "point",
     "slider",
     "dropdown",
     "text",

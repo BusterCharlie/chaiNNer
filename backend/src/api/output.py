@@ -7,7 +7,7 @@ import navi
 
 from .types import InputId, OutputId
 
-OutputKind = Literal["large-image", "tagged", "generic"]
+OutputKind = Literal["large-image", "tagged", "generic", "preview"]
 BroadcastData = Mapping[str, object]
 
 T = TypeVar("T")

@@ -15,6 +15,7 @@ import { FileInput } from './FileInput';
 import { GenericInput } from './GenericInput';
 import { InputContainer, InputHandle } from './InputContainer';
 import { NumberInput } from './NumberInput';
+import { PointInput } from './PointInput';
 import { InputProps } from './props';
 import { SliderInput } from './SliderInput';
 import { StaticValueInput } from './StaticValueInput';
@@ -31,6 +32,7 @@ const InputComponents: {
     text: TextInput,
     dropdown: DropDownInput,
     number: NumberInput,
+    point: PointInput,
     slider: SliderInput,
     color: ColorInput,
     generic: GenericInput,

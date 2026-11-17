@@ -66,6 +66,10 @@
             "copyText": "Copy Number",
             "paste": "Paste"
         },
+        "point": {
+            "noImage": "Connect an image, or run the chain once, to see it here.",
+            "hint": "Click or drag on the image, then use the arrow keys to nudge the point."
+        },
         "text": {
             "copyText": "Copy Text",
             "paste": "Paste",
