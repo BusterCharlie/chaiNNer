@@ -188,9 +188,40 @@ pixels per material):
   Occlusion is used.
 - **Colour picks help when the material regions differ in hue rather than brightness.** The
   brick pick (tolerance 12) covers 31% of the image.
-- **Scanned roughness has very low contrast.** The standard deviation is 0.02 for all three, 0.04
-  for the basket, and a median of 0.047 across the 12 Poly Haven materials (0.015–0.14). The
-  node's default Contrast of 10% is about twice the typical value; **4–5% is a better default.**
+- **Scanned roughness has low contrast.** The standard deviation is 0.02 for these three, 0.04 for
+  the basket, 0.075 and 0.11 for the two metal sheets below, and a median of 0.047 across the 12
+  Poly Haven materials (0.015–0.14). The node's default Contrast of 10% is about twice the typical
+  value; **5% is a better default.**
+
+### Two scanned corrugated metal sheets
+
+Two more licensed scans from the same vendor: weathered grey sheet and rusty sheet, scanned
+with the vendor's own scanner, colour-calibrated against a chart, 2 × 2 m. Each comes with
+albedo, roughness, gloss, specular, AO, cavity, bump, displacement and normal maps.
+
+- **No metal information.** There is no metalness map, and the specular map is flat at about
+  0.19 (sRGB) everywhere, about F0 0.03–0.04, the value for non-metals. So the vendor treats
+  weathered and rusty metal as non-metallic throughout.
+- **Gloss isn't exactly 1 − roughness.** The two are tightly linked (r −0.99), but differ by up
+  to 0.15, and the curve between them differs between the two sheets.
+- **The brightness direction is opposite in the two sheets:**
+
+| Sheet | Roughness mean / sd | Brightness | Best Generate Roughness setup | R² |
+|---|---|---|---|---|
+| Weathered grey | 0.73 / 0.075 | brighter = **rougher** (r +0.84) | brightness only, *Brighter Is Rougher* on | 0.70 |
+| Rusty | 0.77 / 0.11 (smoothest areas ≈ 0.3) | brighter = **smoother** (rank −0.87) | brightness + a colour pick on the rust (+0.16) | 0.60 |
+
+  - All colour features together reach R² 0.86 and 0.72. Geometry adds almost nothing for
+    either sheet (+0.00 / +0.01). Edges, Cavities and Occlusion barely help.
+  - Global brightness beats local here too.
+
+**Across all six commercial scans:**
+- **The direction depends on the material.** Brighter is rougher on the basket and the weathered
+  sheet, and brighter is smoother on the conglomerate, rusty sheet and painted plaster. There's no
+  universal default, so *Brighter Is Rougher* has to stay a user choice.
+- **The best cue also depends on the material:** brightness (basket, conglomerate, both metal
+  sheets), occlusion (painted plaster) or colour (brick, rust). This supports keeping all three
+  tools in the node: brightness, AO layer and colour picks.
 
 ---
 
