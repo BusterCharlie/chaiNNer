@@ -81,6 +81,15 @@ export type LabelStyle = 'default' | 'inline' | 'hidden';
 export interface GenericInput extends InputBase {
     readonly kind: 'generic';
 }
+export interface PointInput extends InputBase {
+    readonly kind: 'point';
+    /** "x,y" as fractions of the image size. */
+    readonly def: string;
+    /** The image input whose image is shown under the point. */
+    readonly imageInput: InputId;
+    /** An output of the same node that broadcasts a preview of the image, if any. */
+    readonly previewOutput?: OutputId | null;
+}
 export interface DropDownInput extends InputBase {
     readonly kind: 'dropdown';
     readonly def: string | number;
@@ -151,6 +160,7 @@ export interface StaticValueInput extends InputBase {
 export type InputKind = Input['kind'];
 export type Input =
     | GenericInput
+    | PointInput
     | FileInput
     | DirectoryInput
     | TextInput
@@ -160,7 +170,7 @@ export type Input =
     | ColorInput
     | StaticValueInput;
 
-export type OutputKind = 'large-image' | 'tagged' | 'generic';
+export type OutputKind = 'large-image' | 'tagged' | 'generic' | 'preview';
 
 export interface Output {
     readonly id: OutputId;

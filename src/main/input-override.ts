@@ -10,6 +10,7 @@ import {
 } from '../common/common-types';
 import { InputOverrideId } from '../common/input-override-common';
 import { log } from '../common/log';
+import { parsePoint } from '../common/point';
 import { SchemaMap } from '../common/SchemaMap';
 import { joinEnglish } from '../common/util';
 import type { Edge, Node } from 'reactflow';
@@ -61,6 +62,15 @@ const assignInput = (
     const errorStart = `The input with id ${inputId} on node ${node.id} is a ${input.kind} input`;
 
     switch (input.kind) {
+        case 'point': {
+            if (typeof value !== 'string' || parsePoint(value) === undefined)
+                throw new Error(
+                    `${errorStart}, which expects "x,y" with both numbers between 0 and 1.`
+                );
+
+            inputData[inputId] = value;
+            break;
+        }
         case 'directory': {
             if (typeof value !== 'string')
                 throw new Error(`${errorStart}, which expects a string value.`);

@@ -22,11 +22,14 @@ const OutputComponents: Readonly<
     'large-image': LargeImageOutput,
     tagged: TaggedOutput,
     generic: GenericOutput,
+    // previews are only used by other components (e.g. image editors in inputs), never shown
+    preview: GenericOutput,
 };
 const OutputIsGeneric: Readonly<Record<OutputKind, boolean>> = {
     'large-image': false,
     tagged: false,
     generic: true,
+    preview: false,
 };
 
 const NO_OUTPUT_DATA: UseOutputData<never> = { current: undefined, last: undefined, stale: false };
@@ -117,6 +120,9 @@ export const NodeOutputs = memo(({ nodeState, animated }: NodeOutputProps) => {
         <>
             {schema.outputs.map((output) => {
                 if (schema.inputs.some((i) => i.fused?.outputId === output.id)) {
+                    return null;
+                }
+                if (output.kind === 'preview') {
                     return null;
                 }
 
