@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#16181d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Tag Review</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="topbar" hidden>
+  <nav class="tabs" aria-label="Mode">
+    <button type="button" data-route="verify">Verify</button>
+    <button type="button" data-route="missing">Missing</button>
+    <button type="button" data-route="random">Random</button>
+    <button type="button" data-route="browse">Browse</button>
+  </nav>
+  <button type="button" class="me" data-route="me" aria-label="Your stats and settings">·</button>
+</header>
+<main id="view" tabindex="-1"></main>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
